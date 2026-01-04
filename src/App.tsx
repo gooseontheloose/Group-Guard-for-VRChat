@@ -94,7 +94,16 @@ function App() {
     // Return unsubscribe function
     // Listen for updates if updater API is available
     if (window.electron?.updater) {
+      // Check initial status (in case we missed the event)
+      window.electron.updater.checkStatus().then(downloaded => {
+          if (downloaded) {
+              console.log('Update already downloaded (found via status check)');
+              setIsUpdateReady(true);
+          }
+      });
+
       const unsubscribe = window.electron.updater.onUpdateDownloaded(() => {
+        console.log('Update downloaded event received');
         setIsUpdateReady(true);
       });
       return unsubscribe;

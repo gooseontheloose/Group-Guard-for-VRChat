@@ -131,7 +131,8 @@ import { contextBridge, ipcRenderer } from 'electron';
              ipcRenderer.on('updater:update-downloaded', handler);
              return () => ipcRenderer.removeListener('updater:update-downloaded', handler);
          },
-         quitAndInstall: () => ipcRenderer.invoke('updater:quit-and-install')
+         quitAndInstall: () => ipcRenderer.invoke('updater:quit-and-install'),
+         checkStatus: () => ipcRenderer.invoke('updater:check-status')
      }
  });
 

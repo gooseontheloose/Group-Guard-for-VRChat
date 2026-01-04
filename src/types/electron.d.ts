@@ -270,8 +270,8 @@ export interface ElectronAPI {
 
   // Database API for local logging
   database: {
-      getSessions: (groupId?: string) => Promise<any[]>;
-      getSessionEvents: (filename: string) => Promise<any[]>;
+      getSessions: (groupId?: string) => Promise<unknown[]>;
+      getSessionEvents: (filename: string) => Promise<unknown[]>;
       clearSessions: () => Promise<boolean>;
   };
 
@@ -293,6 +293,7 @@ export interface ElectronAPI {
       onUpdateAvailable: (callback: () => void) => () => void;
       onUpdateDownloaded: (callback: () => void) => () => void;
       quitAndInstall: () => void;
+      checkStatus: () => Promise<boolean>;
   };
 
   // Window Controls

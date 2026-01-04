@@ -195,13 +195,42 @@ app.whenReady().then(async () => {
   // Check for updates (Production only)
   if (process.env.NODE_ENV !== 'development') {
       try {
+          autoUpdater.logger = log;
+          // @ts-expect-error - log types might mismatch slightly but it works
+          autoUpdater.logger.transports.file.level = 'info';
+
+          log.info('Initializing auto-updater...');
+          
+          autoUpdater.on('checking-for-update', () => {
+              log.info('Checking for updates...');
+          });
+
+          autoUpdater.on('update-available', (info) => {
+              log.info('Update available:', info);
+          });
+
+          autoUpdater.on('update-not-available', (info) => {
+              log.info('Update not available:', info);
+          });
+
+          autoUpdater.on('error', (err) => {
+              log.error('Error in auto-updater:', err);
+          });
+
+          autoUpdater.on('download-progress', (progressObj) => {
+              log.info(`Download speed: ${progressObj.bytesPerSecond} - Downloaded ${progressObj.percent}%`);
+          });
+
           // Check but don't force notify yet, we'll handle the UI
           autoUpdater.checkForUpdatesAndNotify();
           
           // When update is ready, tell the UI to show the modal
-          autoUpdater.on('update-downloaded', () => {
-              log.info('Update downloaded, prompting user...');
-              mainWindow?.webContents.send('updater:update-downloaded');
+          autoUpdater.on('update-downloaded', (info) => {
+              log.info('Update downloaded:', info);
+              // Small delay to ensure UI is ready if it happened on startup
+              setTimeout(() => {
+                  mainWindow?.webContents.send('updater:update-downloaded');
+              }, 2000);
           });
       } catch (err) {
           log.error('Failed to check for updates:', err);
@@ -211,6 +240,22 @@ app.whenReady().then(async () => {
   // Handle explicit install request from UI
   ipcMain.handle('updater:quit-and-install', () => {
       autoUpdater.quitAndInstall();
+  });
+
+  // Handle status check (in case UI loads after update is downloaded)
+  ipcMain.handle('updater:check-status', async () => {
+      // Return true if an update file exists in the downloaded cache
+      // Note: This is an approximation. Ideally we track the state.
+      // But autoUpdater doesn't expose a simple "isDownloaded" property.
+      // We'll rely on the event for now for the push, but we can't easily poll without state tracking.
+      // Let's add simple state tracking variable.
+      return updateDownloaded; 
+  });
+
+  // Track update state
+  let updateDownloaded = false;
+  autoUpdater.on('update-downloaded', () => {
+      updateDownloaded = true;
   });
 
   // macOS: Re-create window when dock icon is clicked

@@ -44,7 +44,7 @@ export const DatabaseView: React.FC = () => {
         try {
             const groupId = selectedGroup?.id;
             const data = await window.electron.database.getSessions(groupId);
-            setSessions(data);
+            setSessions(data as Session[]);
             setSelectedSession(null);
             setSessionEvents([]);
             setSelectedActor(null);
@@ -102,7 +102,7 @@ export const DatabaseView: React.FC = () => {
         setSelectedActor(null);
         try {
             const events = await window.electron.database.getSessionEvents(session.filename);
-            setSessionEvents(events || []);
+            setSessionEvents((events as InstanceEvent[]) || []);
         } catch (error) {
             console.error("Failed to load events", error);
         } finally {
