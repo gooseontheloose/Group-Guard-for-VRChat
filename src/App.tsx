@@ -92,9 +92,13 @@ function App() {
   // Listen for updates
   useEffect(() => {
     // Return unsubscribe function
-    return window.electron.updater.onUpdateDownloaded(() => {
+    // Listen for updates if updater API is available
+    if (window.electron?.updater) {
+      const unsubscribe = window.electron.updater.onUpdateDownloaded(() => {
         setIsUpdateReady(true);
-    });
+      });
+      return unsubscribe;
+    }
   }, []);
 
   // Check storage configuration first
