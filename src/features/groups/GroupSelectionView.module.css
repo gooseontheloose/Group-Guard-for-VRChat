@@ -1,0 +1,125 @@
+
+.container {
+  padding: 0 2rem;
+}
+
+.header {
+  margin-bottom: 2rem;
+  text-align: center;
+}
+
+.title {
+  font-size: 2.5rem;
+  font-weight: 800;
+}
+
+.subtitle {
+  color: var(--color-text-dim);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 2rem;
+}
+
+.cardPanel {
+  position: relative;
+  height: 200px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
+  padding: 0 !important; /* Override GlassPanel default padding if needed */
+  border-width: 1px;
+  border-style: solid;
+}
+
+.cardLive {
+  border-color: var(--color-success) !important;
+}
+
+.cardDefault {
+  border-color: var(--border-color);
+}
+
+.liveBadge {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  background: var(--color-success);
+  color: black;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-weight: bold;
+  font-size: 0.8rem;
+  z-index: 10;
+  box-shadow: 0 0 10px var(--color-success);
+}
+
+.banner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-size: cover;
+  background-position: center;
+  filter: brightness(0.6);
+  z-index: 0;
+}
+
+.bannerFallback {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(45deg, var(--color-primary), var(--color-accent));
+  opacity: 0.2;
+  z-index: 0;
+}
+
+.contentOverlay {
+  position: relative;
+  z-index: 1;
+  padding: 1.5rem;
+  background: linear-gradient(to top, rgba(0,0,0,0.9), transparent);
+}
+
+.groupIcon {
+  width: 50px;
+  height: 50px;
+  border-radius: 12px;
+  margin-bottom: 0.5rem;
+  border: 2px solid white;
+}
+
+.groupName {
+  font-size: 1.2rem;
+  font-weight: bold;
+  color: white;
+  margin: 0;
+}
+
+.metaRow {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 0.5rem;
+}
+
+.shortCode {
+  font-size: 0.8rem;
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.memberCount {
+  font-size: 0.7rem;
+  background: linear-gradient(90deg, hsla(var(--primary-hue), 100%, 60%, 0.2), hsla(var(--primary-hue), 100%, 40%, 0.2));
+  border: 1px solid hsla(var(--primary-hue), 100%, 60%, 0.3);
+  color: white;
+  padding: 2px 8px;
+  border-radius: 4px;
+  backdrop-filter: blur(4px);
+}

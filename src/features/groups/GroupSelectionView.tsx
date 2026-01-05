@@ -3,6 +3,7 @@ import { useGroupStore } from '../../stores/groupStore';
 import { GlassPanel } from '../../components/ui/GlassPanel';
 import { NeonButton } from '../../components/ui/NeonButton';
 import { motion } from 'framer-motion';
+import styles from './GroupSelectionView.module.css';
 
 // Memoized animation variants (stable references)
 const containerVariants = {
@@ -16,8 +17,8 @@ const containerVariants = {
 };
 
 const itemVariants = {
-  hidden: { opacity: 0, y: 15 },
-  show: { opacity: 1, y: 0, transition: { duration: 0.2 } } // Faster animation
+  hidden: { opacity: 0, y: 20 },
+  show: { opacity: 1, y: 0, transition: { type: "spring" as const, stiffness: 300, damping: 24 } }
 };
 
 export const GroupSelectionView: React.FC = memo(() => {
@@ -46,7 +47,13 @@ export const GroupSelectionView: React.FC = memo(() => {
   if (isLoading) {
     return (
       <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100%' }}>
-        <h2 className="text-gradient">Scanning Group Frequencies...</h2>
+        <motion.h2 
+            className="text-gradient"
+            animate={{ opacity: [0.5, 1, 0.5] }}
+            transition={{ duration: 1.5, repeat: Infinity, ease: "easeInOut" }}
+        >
+            Scanning Group Frequencies...
+        </motion.h2>
       </div>
     );
   }
@@ -76,21 +83,17 @@ export const GroupSelectionView: React.FC = memo(() => {
   }
 
   return (
-    <div style={{ padding: '0 2rem' }}>
-      <div style={{ marginBottom: '2rem', textAlign: 'center' }}>
-        <h1 className="text-gradient" style={{ fontSize: '2.5rem', fontWeight: 800 }}>SELECT GROUP</h1>
-        <p style={{ color: 'var(--color-text-dim)' }}>Identify target for moderation protocols.</p>
+    <div className={styles.container}>
+      <div className={styles.header}>
+        <h1 className={`${styles.title} text-gradient`}>SELECT GROUP</h1>
+        <p className={styles.subtitle}>Identify target for moderation protocols.</p>
       </div>
 
       <motion.div 
         variants={containerVariants}
         initial="hidden"
         animate="show"
-        style={{ 
-          display: 'grid', 
-          gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', 
-          gap: '2rem' 
-        }}
+        className={styles.grid}
       >
         {myGroups.map((group) => {
           // Check if user is currently in this group's instance
@@ -106,38 +109,24 @@ export const GroupSelectionView: React.FC = memo(() => {
                     : '0 15px 30px rgba(var(--primary-hue), 0.3), 0 0 20px rgba(var(--primary-hue), 0.2) inset' 
                }}
                transition={{ type: 'spring', stiffness: 300, damping: 20 }}
-               onClick={() => selectGroup(group)} 
-               style={{ cursor: 'pointer', height: '100%' }}
+               onClick={() => selectGroup(group)}
+               onKeyDown={(e) => {
+                 if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    selectGroup(group);
+                 }
+               }}
+               role="button"
+               tabIndex={0}
+               style={{ cursor: 'pointer', height: '100%', outline: 'none' }}
             >
-               <GlassPanel className="group-card" style={{ 
-                 position: 'relative', 
-                 height: '200px', 
-                 display: 'flex', 
-                 flexDirection: 'column', 
-                 justifyContent: 'flex-end',
-                 overflow: 'hidden',
-                 padding: 0,
-                 border: isLive ? '1px solid #22c55e' : '1px solid var(--border-color)', // Green border for live
-                 // Removed standard transition as framer handling hover now
-               }}>
+               <GlassPanel className={`${styles.cardPanel} ${isLive ? styles.cardLive : styles.cardDefault}`}>
                  {/* Live Badge */}
                  {isLive && (
                      <motion.div
                         initial={{ opacity: 0, scale: 0.8 }}
                         animate={{ opacity: 1, scale: 1 }}
-                        style={{
-                            position: 'absolute',
-                            top: '12px',
-                            right: '12px',
-                            background: '#22c55e',
-                            color: 'black',
-                            padding: '4px 12px',
-                            borderRadius: '12px',
-                            fontWeight: 'bold',
-                            fontSize: '0.8rem',
-                            zIndex: 10,
-                            boxShadow: '0 0 10px #22c55e'
-                        }}
+                        className={styles.liveBadge}
                      >
                         LIVE
                      </motion.div>
@@ -145,50 +134,20 @@ export const GroupSelectionView: React.FC = memo(() => {
 
                  {/* Background Banner */}
                  {group.bannerUrl ? (
-                   <div style={{
-                     position: 'absolute',
-                     top: 0, left: 0, right: 0, bottom: 0,
-                     backgroundImage: `url(${group.bannerUrl})`,
-                     backgroundSize: 'cover',
-                     backgroundPosition: 'center',
-                     filter: 'brightness(0.6)',
-                     zIndex: 0
-                   }} />
+                   <div className={styles.banner} style={{ backgroundImage: `url(${group.bannerUrl})` }} />
                  ) : (
-                    <div style={{
-                        position: 'absolute',
-                        top: 0, left: 0, right: 0, bottom: 0,
-                        background: 'linear-gradient(45deg, var(--color-primary), var(--color-accent))',
-                        opacity: 0.2,
-                        zIndex: 0
-                    }} />
+                    <div className={styles.bannerFallback} />
                  )}
 
                  {/* Content Overlay */}
-                 <div style={{ 
-                   position: 'relative', 
-                   zIndex: 1, 
-                   padding: '1.5rem',
-                   background: 'linear-gradient(to top, rgba(0,0,0,0.9), transparent)'
-                 }}>
+                 <div className={styles.contentOverlay}>
                    {group.iconUrl && (
-                     <img src={group.iconUrl} style={{ 
-                       width: 50, height: 50, borderRadius: '12px', marginBottom: '0.5rem',
-                       border: '2px solid white' 
-                     }} />
+                     <img src={group.iconUrl} className={styles.groupIcon} alt="" />
                    )}
-                   <h3 style={{ fontSize: '1.2rem', fontWeight: 'bold', color: 'white' }}>{group.name}</h3>
-                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '0.5rem' }}>
-                     <span style={{ fontSize: '0.8rem', color: 'rgba(255,255,255,0.8)' }}>{group.shortCode}</span>
-                     <span style={{ 
-                       fontSize: '0.7rem', 
-                       background: 'linear-gradient(90deg, hsla(var(--primary-hue), 100%, 60%, 0.2), hsla(var(--primary-hue), 100%, 40%, 0.2))',
-                       border: '1px solid hsla(var(--primary-hue), 100%, 60%, 0.3)',
-                       color: 'white',
-                       padding: '2px 8px', 
-                       borderRadius: '4px',
-                       backdropFilter: 'blur(4px)'
-                     }}>
+                   <h3 className={styles.groupName}>{group.name}</h3>
+                   <div className={styles.metaRow}>
+                     <span className={styles.shortCode}>{group.shortCode}</span>
+                     <span className={styles.memberCount}>
                        {group.memberCount} Members
                      </span>
                    </div>

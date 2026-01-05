@@ -12,6 +12,26 @@ import { RequestsListDialog } from '../dashboard/dialogs/RequestsListDialog';
 import { BansListDialog } from '../dashboard/dialogs/BansListDialog';
 import { InstancesListDialog } from '../dashboard/dialogs/InstancesListDialog';
 import { InstanceMonitorWidget } from './widgets/InstanceMonitorWidget';
+import { StatTile } from './components/StatTile';
+import styles from './DashboardView.module.css';
+import { motion } from 'framer-motion';
+
+const containerVariants = {
+    hidden: { opacity: 0 },
+    show: {
+        opacity: 1,
+        transition: {
+            staggerChildren: 0.1,
+            delayChildren: 0.2
+        }
+    }
+};
+
+const itemVariants = {
+    hidden: { opacity: 0, y: 20 },
+    show: { opacity: 1, y: 0, transition: { type: "spring" as const, stiffness: 300, damping: 24 } }
+};
+
 
 // Audit event types that affect member count
 const MEMBER_AFFECTING_EVENTS = [
@@ -125,141 +145,149 @@ export const DashboardView: React.FC = memo(() => {
 
   return (
     <>
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '1.5rem', paddingBottom: '20px' }}>
+    <motion.div 
+        className={styles.container}
+        variants={containerVariants}
+        initial="hidden"
+        animate="show"
+    >
       
         {/* Top Header & Stats Row */}
-        <GlassPanel style={{ flex: '0 0 auto', padding: '1rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem' }}>
-            <div style={{ minWidth: '200px' }}>
-                <h1 className="text-gradient" style={{ fontSize: '1.8rem', margin: 0, fontWeight: 800, lineHeight: 1.2 }}>
+        <GlassPanel className={styles.headerPanel}>
+
+            <div className={styles.titleSection}>
+                <motion.h1 
+                    className={`${styles.title} text-gradient`}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.2 }}
+                >
                     {selectedGroup?.name || 'Dashboard'}
-                </h1>
-                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-dim)', marginTop: '4px' }}>
+                </motion.h1>
+                <motion.div 
+                    className={styles.subtitle}
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ delay: 0.3 }}
+                >
                     COMMAND CENTER
-                </div>
+                </motion.div>
             </div>
 
             {/* Stats Grid */}
-            <div style={{ display: 'flex', gap: '1rem', flex: 1, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+            <div className={styles.statsGrid}>
                 
                 {/* Member Count Tile */}
-                <div 
-                    onClick={() => setShowMembers(true)}
-                    style={{ background: 'rgba(255,255,255,0.05)', padding: '0.8rem', borderRadius: '8px', minWidth: '130px', cursor: 'pointer', transition: 'background 0.2s' }}
-                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-                    onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
-                >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.2rem' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <small style={{ color: 'var(--color-primary)', fontSize: '0.7rem', fontWeight: 600 }}>MEMBERS</small>
-                            {pipelineStatus.connected && <PipelineIndicator />}
-                        </div>
-                        <RefreshTimer secondsUntilRefresh={memberRefreshCooldown} isRefreshing={isMembersLoading} onRefreshClick={handleMemberRefresh} />
-                    </div>
-                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{selectedGroup?.memberCount}</div>
-                </div>
+                <motion.div variants={itemVariants} style={{ height: '100%' }}>
+                    <StatTile 
+                        label="MEMBERS"
+                        value={selectedGroup?.memberCount || 0}
+                        color="var(--color-primary)"
+                        onClick={() => setShowMembers(true)}
+                        headerLeftExtra={pipelineStatus.connected && <PipelineIndicator />}
+                        headerRight={
+                            <RefreshTimer 
+                                secondsUntilRefresh={memberRefreshCooldown} 
+                                isRefreshing={isMembersLoading} 
+                                onRefreshClick={handleMemberRefresh} 
+                            />
+                        }
+                    />
+                </motion.div>
 
                 {/* Active Instances Tile */}
-                <div 
-                    onClick={() => setShowInstances(true)}
-                    style={{ background: 'rgba(255,255,255,0.05)', padding: '0.8rem', borderRadius: '8px', minWidth: '130px', cursor: 'pointer', transition: 'background 0.2s' }}
-                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-                    onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
-                >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.2rem' }}>
-                        <small style={{ color: '#4cc9f0', fontSize: '0.7rem', fontWeight: 600 }}>INSTANCES</small>
-                        <RefreshTimer secondsUntilRefresh={instancesRefresh.secondsUntilRefresh} isRefreshing={instancesRefresh.isRefreshing} onRefreshClick={(e) => { e?.stopPropagation(); instancesRefresh.refreshNow(); }} />
-                    </div>
-                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{isInstancesLoading ? '...' : instances.length}</div>
-                </div>
+                <motion.div variants={itemVariants} style={{ height: '100%' }}>
+                    <StatTile
+                        label="INSTANCES"
+                        value={isInstancesLoading ? '...' : instances.length}
+                        color="var(--color-info)"
+                        onClick={() => setShowInstances(true)}
+                        headerRight={
+                            <RefreshTimer 
+                                secondsUntilRefresh={instancesRefresh.secondsUntilRefresh} 
+                                isRefreshing={instancesRefresh.isRefreshing} 
+                                onRefreshClick={(e) => { e?.stopPropagation(); instancesRefresh.refreshNow(); }} 
+                            />
+                        }
+                    />
+                </motion.div>
 
                 {/* Requests Tile */}
-                <div 
-                    onClick={() => setShowRequests(true)}
-                    style={{ background: 'rgba(255,255,255,0.05)', padding: '0.8rem', borderRadius: '8px', minWidth: '130px', cursor: 'pointer', transition: 'background 0.2s' }}
-                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-                    onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
-                >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.2rem' }}>
-                        <small style={{ color: 'var(--color-accent)', fontSize: '0.7rem', fontWeight: 600 }}>REQUESTS</small>
-                        <RefreshTimer secondsUntilRefresh={requestsRefresh.secondsUntilRefresh} isRefreshing={requestsRefresh.isRefreshing} onRefreshClick={(e) => { e?.stopPropagation(); requestsRefresh.refreshNow(); }} />
-                    </div>
-                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{isRequestsLoading ? '...' : requests.length}</div>
-                </div>
+                <motion.div variants={itemVariants} style={{ height: '100%' }}>
+                    <StatTile
+                        label="REQUESTS"
+                        value={isRequestsLoading ? '...' : requests.length}
+                        color="var(--color-accent)"
+                        onClick={() => setShowRequests(true)}
+                        headerRight={
+                            <RefreshTimer 
+                                secondsUntilRefresh={requestsRefresh.secondsUntilRefresh} 
+                                isRefreshing={requestsRefresh.isRefreshing} 
+                                onRefreshClick={(e) => { e?.stopPropagation(); requestsRefresh.refreshNow(); }} 
+                            />
+                        }
+                    />
+                </motion.div>
 
                 {/* Bans Tile */}
-                <div 
-                    onClick={() => setShowBans(true)}
-                    style={{ background: 'rgba(255,255,255,0.05)', padding: '0.8rem', borderRadius: '8px', minWidth: '130px', cursor: 'pointer', transition: 'background 0.2s' }}
-                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.1)'}
-                    onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.05)'}
-                >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.2rem' }}>
-                        <small style={{ color: '#ef4444', fontSize: '0.7rem', fontWeight: 600 }}>BANS</small>
-                        <RefreshTimer secondsUntilRefresh={bansRefresh.secondsUntilRefresh} isRefreshing={bansRefresh.isRefreshing} onRefreshClick={(e) => { e?.stopPropagation(); bansRefresh.refreshNow(); }} />
-                    </div>
-                    <div style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{isBansLoading ? '...' : bans.length}</div>
-                </div>
+                <motion.div variants={itemVariants} style={{ height: '100%' }}>
+                    <StatTile
+                        label="BANS"
+                        value={isBansLoading ? '...' : bans.length}
+                        color="var(--color-danger)"
+                        onClick={() => setShowBans(true)}
+                        headerRight={
+                            <RefreshTimer 
+                                secondsUntilRefresh={bansRefresh.secondsUntilRefresh} 
+                                isRefreshing={bansRefresh.isRefreshing} 
+                                onRefreshClick={(e) => { e?.stopPropagation(); bansRefresh.refreshNow(); }} 
+                            />
+                        }
+                    />
+                </motion.div>
             </div>
         </GlassPanel>
 
         {/* Main Content Area: 2 Columns */}
-        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: 'minmax(0, 7fr) minmax(0, 5fr)', gap: '1.5rem', minHeight: 0 }}>
+        <div className={styles.contentGrid}>
             
             {/* Left: Audit Log Feed */}
-            <GlassPanel style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', height: '100%' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.8rem', flex: '0 0 auto', paddingBottom: '0.8rem', borderBottom: '1px solid rgba(255,255,255,0.1)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                        <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700 }}>Live Audit Feed</h3>
-                        <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#22c55e', boxShadow: '0 0 8px #22c55e' }} />
+            <GlassPanel className={styles.auditPanel}>
+                <div className={styles.auditHeader}>
+                    <div className={styles.auditTitle}>
+                        <h3>Live Audit Feed</h3>
+                        <div className={styles.liveIndicator} />
                     </div>
                     <NeonButton size="sm" variant="ghost" onClick={() => selectedGroup && fetchLogs(selectedGroup.id)} disabled={isLogsLoading}>
                         {isLogsLoading ? 'SYNCING...' : 'REFRESH'}
                     </NeonButton>
                 </div>
                 
-                <div 
-                    style={{ 
-                        flex: 1, 
-                        overflowY: 'auto',  // Always scrollable in full mode
-                        paddingRight: '4px',
-                        minHeight: 0 // Crucial for flex box scrolling
-                    }}
-                >
+                <div className={styles.logList}>
                     {logs.length === 0 && !isLogsLoading ? (
-                        <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--color-text-dim)', fontSize: '0.9rem', fontStyle: 'italic' }}>
+                        <div className={styles.emptyState}>
                             -- No visible spectrum events --
                         </div>
                     ) : (
                         logs.map((log) => (
-                            <div key={log.id} style={{ 
-                                padding: '0.75rem 0.5rem', 
-                                borderBottom: '1px solid rgba(255,255,255,0.05)',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '1rem',
-                                fontSize: '0.85rem',
-                                transition: 'background 0.2s',
-                            }}
-                            onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}
-                            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                            >
-                                <div style={{ 
-                                    width: '8px', height: '8px', 
-                                    flex: '0 0 auto',
-                                    borderRadius: '50%', 
-                                    background: log.eventType?.includes('ban') ? '#ef4444' : (log.eventType?.includes('join') ? '#22c55e' : 'var(--color-accent)'),
-                                    boxShadow: log.eventType?.includes('ban') ? '0 0 8px rgba(239, 68, 68, 0.4)' : 'none'
-                                }} />
-                                <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '4px' }}>
-                                        <span style={{ fontWeight: '600', color: 'var(--color-primary)', fontSize: '0.9rem' }}>
+                            <div key={log.id} className={styles.logItem}>
+                                <div 
+                                    className={styles.logDot} 
+                                    style={{
+                                        background: log.eventType?.includes('ban') ? 'var(--color-danger)' : (log.eventType?.includes('join') ? 'var(--color-success)' : 'var(--color-accent)'),
+                                        boxShadow: log.eventType?.includes('ban') ? '0 0 8px rgba(239, 68, 68, 0.4)' : 'none'
+                                    }} 
+                                />
+                                <div className={styles.logContent}>
+                                    <div className={styles.logMeta}>
+                                        <span className={styles.actorName}>
                                             {log.actorDisplayName}
                                         </span>
-                                        <span style={{ fontSize: '0.75rem', color: 'var(--color-text-dim)', fontFamily: 'monospace' }}>
+                                        <span className={styles.timestamp}>
                                             {new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
                                         </span>
                                     </div>
-                                    <div style={{ color: 'rgba(255,255,255,0.8)', fontSize: '0.85rem' }}>
+                                    <div className={styles.logDescription}>
                                         {log.description || log.eventType}
                                     </div>
                                 </div>
@@ -270,7 +298,7 @@ export const DashboardView: React.FC = memo(() => {
             </GlassPanel>
 
             {/* Right: Instance Monitor */}
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+            <div className={styles.monitorColumn}>
                 <InstanceMonitorWidget />
             </div>
         </div>
@@ -295,12 +323,10 @@ export const DashboardView: React.FC = memo(() => {
           isOpen={showInstances}
           onClose={() => setShowInstances(false)}
       />
-
-      {/* Global User Profile Dialog */}
-      {/* <UserProfileDialog /> */}
-    </div>
+    </motion.div>
     </>
   );
 });
 
 DashboardView.displayName = 'DashboardView';
+

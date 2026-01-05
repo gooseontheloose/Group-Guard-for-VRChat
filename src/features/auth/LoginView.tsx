@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useAuthStore } from '../../stores/authStore';
 import { NeonButton } from '../../components/ui/NeonButton';
 import { motion, AnimatePresence } from 'framer-motion';
+import styles from './LoginView.module.css';
 
 export const LoginView: React.FC = () => {
   const { login, verify2FA, requires2FA, isLoading, error, rememberMe, setRememberMe, loadSavedCredentials } = useAuthStore();
@@ -72,42 +73,11 @@ export const LoginView: React.FC = () => {
   };
 
   return (
-    <div style={{ 
-      position: 'relative',
-      display: 'flex', 
-      justifyContent: 'center', 
-      alignItems: 'center', 
-      height: '100vh',
-      width: '100vw',
-      overflow: 'hidden',
-      background: '#030014', // Deep dark blue/black
-      color: 'white'
-    }}>
+    <div className={styles.container}>
       {/* Dynamic Background Effects */}
-      <div style={{
-        position: 'absolute',
-        top: 0, left: 0, right: 0, bottom: 0,
-        background: 'radial-gradient(circle at 50% 50%, hsla(var(--primary-hue), 100%, 20%, 0.2) 0%, rgba(0, 0, 0, 0) 50%)',
-        zIndex: 0
-      }} />
-      <div style={{
-        position: 'absolute',
-        top: '-20%', left: '-10%',
-        width: '50vw', height: '50vw',
-        background: 'radial-gradient(circle, hsla(var(--primary-hue), 100%, 60%, 0.15) 0%, rgba(0,0,0,0) 70%)',
-        filter: 'blur(60px)',
-        zIndex: 0,
-        opacity: 0.6
-      }} />
-      <div style={{
-        position: 'absolute',
-        bottom: '-20%', right: '-10%',
-        width: '60vw', height: '60vw',
-        background: 'radial-gradient(circle, hsla(var(--accent-hue), 100%, 60%, 0.1) 0%, rgba(0,0,0,0) 70%)',
-        filter: 'blur(80px)',
-        zIndex: 0,
-        opacity: 0.5
-      }} />
+      <div className={styles.bgRadialCenter} />
+      <div className={styles.bgBlurTopLeft} />
+      <div className={styles.bgBlurBottomRight} />
 
       {/* Floating Particles / Data Stream */}
       {particles.map((particle) => (
@@ -116,13 +86,11 @@ export const LoginView: React.FC = () => {
           custom={particle}
           variants={particleVariants}
           animate="animate"
+          className={styles.particle}
           style={{
-            position: 'absolute',
             left: `${particle.left}%`,
-            bottom: '-10%',
             width: `${particle.width}px`,
             height: `${particle.height}px`,
-            borderRadius: '50%',
             background: particle.isPrimary ? 'var(--color-primary)' : 'cyan',
             boxShadow: `0 0 10px ${particle.isPrimary ? 'var(--color-primary)' : 'cyan'}`,
           }}
@@ -134,49 +102,19 @@ export const LoginView: React.FC = () => {
         initial={{ opacity: 0, y: 20, scale: 0.95 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
-        style={{ 
-          position: 'relative',
-          width: '420px', 
-          maxWidth: '90%',
-          display: 'flex', 
-          flexDirection: 'column', 
-          gap: '2rem',
-          padding: '3rem',
-          borderRadius: '24px',
-          background: 'rgba(10, 10, 15, 0.6)',
-          backdropFilter: 'blur(24px)',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
-          boxShadow: '0 0 0 1px rgba(0,0,0,0.2), 0 20px 60px -10px rgba(0,0,0,0.6), inset 0 0 30px hsla(var(--primary-hue), 80%, 60%, 0.05)',
-          zIndex: 10
-        }}
+        className={styles.loginCard}
       >
         {/* Glow behind card */}
-        <div style={{
-          position: 'absolute',
-          top: '50%', left: '50%',
-          transform: 'translate(-50%, -50%)',
-          width: '100%', height: '100%',
-          borderRadius: '24px',
-          boxShadow: '0 0 80px -20px hsla(var(--primary-hue), 80%, 60%, 0.15)',
-          zIndex: -1,
-          pointerEvents: 'none'
-        }} />
+        <div className={styles.cardGlow} />
 
         {/* Header */}
-        <div style={{ textAlign: 'center' }}>
+        <div className={styles.header}>
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2, duration: 0.6 }}
           >
-            <div style={{ 
-              display: 'inline-block',
-              padding: '0.5rem',
-              background: 'hsla(var(--primary-hue), 80%, 60%, 0.1)',
-              borderRadius: '12px',
-              marginBottom: '1rem',
-              border: '1px solid hsla(var(--primary-hue), 80%, 60%, 0.2)'
-            }}>
+            <div className={styles.logoIcon}>
                <span style={{ fontSize: '1.5rem' }}>🛡️</span>
             </div>
           </motion.div>
@@ -187,26 +125,10 @@ export const LoginView: React.FC = () => {
             transition={{ delay: 0.3, duration: 0.6 }}
             style={{ marginBottom: '1rem' }}
           >
-            <h2 style={{ 
-              fontSize: '1.2rem', 
-              fontWeight: 600, 
-              color: 'var(--color-primary)', 
-              letterSpacing: '0.2em',
-              marginBottom: '-0.2rem',
-              textTransform: 'uppercase'
-            }}>
+            <h2 className={styles.logoTitle}>
               VRChat
             </h2>
-            <h1 
-              className="text-gradient" 
-              style={{ 
-                fontSize: '2.5rem', 
-                fontWeight: 800,
-                letterSpacing: '-0.02em',
-                textShadow: '0 0 40px hsla(var(--primary-hue), 80%, 60%, 0.3)',
-                margin: 0
-              }}
-            >
+            <h1 className={`${styles.logoMain} text-gradient`}>
               GROUP GUARD
             </h1>
           </motion.div>
@@ -232,27 +154,8 @@ export const LoginView: React.FC = () => {
                 style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}
               >
                 {/* Username Input */}
-                <div style={{ position: 'relative' }}>
-                  <label 
-                    style={{ 
-                      position: 'absolute',
-                      left: '1rem',
-                      top: '50%',
-                      transform: 'translateY(-50%)',
-                      pointerEvents: 'none',
-                      color: 'rgba(255,255,255,0.4)',
-                      transition: 'all 0.2s ease',
-                      fontSize: '0.9rem',
-                      ...(focusedInput === 'username' || username ? {
-                        top: '0',
-                        fontSize: '0.75rem',
-                        color: 'var(--color-primary)',
-                        background: '#0a0a0f',
-                        padding: '0 0.5rem',
-                        transform: 'translateY(-50%)'
-                      } : {})
-                    }}
-                  >
+                <div className={styles.inputGroup}>
+                  <label className={`${styles.inputLabel} ${(focusedInput === 'username' || username) ? styles.inputLabelActive : ''}`}>
                     Username
                   </label>
                   <input 
@@ -261,43 +164,13 @@ export const LoginView: React.FC = () => {
                     onChange={(e) => setUsername(e.target.value)}
                     onFocus={() => setFocusedInput('username')}
                     onBlur={() => setFocusedInput(null)}
-                    style={{ 
-                      width: '100%',
-                      padding: '1rem', 
-                      borderRadius: '12px', 
-                      border: `1px solid ${focusedInput === 'username' ? 'var(--color-primary)' : 'rgba(255,255,255,0.1)'}`,
-                      background: 'rgba(0,0,0,0.2)',
-                      color: 'white',
-                      outline: 'none',
-                      transition: 'all 0.2s ease',
-                      fontSize: '1rem',
-                      boxShadow: focusedInput === 'username' ? '0 0 0 2px hsla(var(--primary-hue), 80%, 60%, 0.2)' : 'none'
-                    }}
+                    className={styles.inputField}
                   />
                 </div>
 
                 {/* Password Input */}
-                <div style={{ position: 'relative' }}>
-                  <label 
-                    style={{ 
-                      position: 'absolute',
-                      left: '1rem',
-                      top: '50%',
-                      transform: 'translateY(-50%)',
-                      pointerEvents: 'none',
-                      color: 'rgba(255,255,255,0.4)',
-                      transition: 'all 0.2s ease',
-                      fontSize: '0.9rem',
-                      ...(focusedInput === 'password' || password ? {
-                        top: '0',
-                        fontSize: '0.75rem',
-                        color: 'var(--color-primary)',
-                        background: '#0a0a0f',
-                        padding: '0 0.5rem',
-                        transform: 'translateY(-50%)' // Move slightly higher to clear border
-                      } : {})
-                    }}
-                  >
+                <div className={styles.inputGroup}>
+                  <label className={`${styles.inputLabel} ${(focusedInput === 'password' || password) ? styles.inputLabelActive : ''}`}>
                     Password
                   </label>
                   <input 
@@ -306,18 +179,7 @@ export const LoginView: React.FC = () => {
                     onChange={(e) => setPassword(e.target.value)}
                     onFocus={() => setFocusedInput('password')}
                     onBlur={() => setFocusedInput(null)}
-                    style={{ 
-                      width: '100%',
-                      padding: '1rem', 
-                      borderRadius: '12px', 
-                      border: `1px solid ${focusedInput === 'password' ? 'var(--color-primary)' : 'rgba(255,255,255,0.1)'}`,
-                      background: 'rgba(0,0,0,0.2)',
-                      color: 'white',
-                      outline: 'none',
-                      transition: 'all 0.2s ease',
-                      fontSize: '1rem',
-                      boxShadow: focusedInput === 'password' ? '0 0 0 2px hsla(var(--primary-hue), 80%, 60%, 0.2)' : 'none'
-                    }}
+                    className={styles.inputField}
                   />
                 </div>
                 
@@ -325,31 +187,11 @@ export const LoginView: React.FC = () => {
                 <motion.label 
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
-                  style={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    gap: '0.75rem',
-                    cursor: 'pointer',
-                    userSelect: 'none',
-                    padding: '0.25rem 0',
-                    width: 'fit-content'
-                  }}
+                  className={styles.rememberMe}
                 >
                   <div 
                     onClick={() => setRememberMe(!rememberMe)}
-                    style={{
-                      width: '20px',
-                      height: '20px',
-                      borderRadius: '6px',
-                      border: `2px solid ${rememberMe ? 'var(--color-primary)' : 'rgba(255,255,255,0.2)'}`,
-                      background: rememberMe ? 'var(--color-primary)' : 'transparent',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      transition: 'all 0.2s ease',
-                      flexShrink: 0,
-                      boxShadow: rememberMe ? '0 0 10px hsla(var(--primary-hue), 80%, 60%, 0.4)' : 'none'
-                    }}
+                    className={`${styles.checkbox} ${rememberMe ? styles.checkboxChecked : ''}`}
                   >
                     {rememberMe && (
                       <motion.svg 
@@ -372,11 +214,7 @@ export const LoginView: React.FC = () => {
                   </div>
                   <span 
                     onClick={() => setRememberMe(!rememberMe)}
-                    style={{ 
-                      color: rememberMe ? 'white' : 'var(--color-text-dim)', 
-                      fontSize: '0.9rem',
-                      transition: 'color 0.2s'
-                    }}
+                    className={`${styles.checkboxLabel} ${rememberMe ? styles.checkboxLabelChecked : ''}`}
                   >
                     Remember me & auto-login
                   </span>
@@ -391,16 +229,7 @@ export const LoginView: React.FC = () => {
                 transition={{ duration: 0.3 }}
                 style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', alignItems: 'center' }}
               >
-                <div style={{
-                  padding: '1rem',
-                  background: 'hsla(var(--primary-hue), 80%, 60%, 0.1)',
-                  borderRadius: '12px',
-                  border: '1px solid hsla(var(--primary-hue), 80%, 60%, 0.2)',
-                  color: 'var(--color-primary)',
-                  fontSize: '0.9rem',
-                  textAlign: 'center',
-                  width: '100%'
-                }}>
+                <div className={styles.twoFaDisplay}>
                   Enter the code from your authenticator app
                 </div>
 
@@ -415,20 +244,7 @@ export const LoginView: React.FC = () => {
                         verify2FA(val);
                       }
                     }}
-                    style={{ 
-                      width: '100%',
-                      padding: '1.2rem', 
-                      borderRadius: '16px', 
-                      border: '2px solid var(--color-primary)',
-                      background: 'rgba(0,0,0,0.3)',
-                      color: 'white',
-                      outline: 'none',
-                      textAlign: 'center',
-                      letterSpacing: '0.8em',
-                      fontSize: '1.8rem',
-                      fontWeight: 'bold',
-                      boxShadow: '0 0 30px -5px hsla(var(--primary-hue), 80%, 60%, 0.3)'
-                    }}
+                    className={styles.twoFaInput}
                     placeholder="000000"
                     maxLength={6}
                     autoFocus
@@ -474,20 +290,7 @@ export const LoginView: React.FC = () => {
             type="submit" 
             variant="secondary"
             disabled={isLoading}
-            style={{ 
-              width: '100%', 
-              marginTop: '0.5rem',
-              height: '3.5rem',
-              fontSize: '1.1rem',
-              fontWeight: 600,
-              background: 'linear-gradient(90deg, hsla(var(--primary-hue), 100%, 50%, 0.15), hsla(var(--accent-hue), 100%, 50%, 0.15))',
-              border: '1px solid hsla(var(--primary-hue), 100%, 70%, 0.3)',
-              boxShadow: '0 0 20px hsla(var(--primary-hue), 100%, 50%, 0.15)',
-              color: 'white',
-              textShadow: '0 0 10px hsla(var(--primary-hue), 100%, 70%, 0.5)',
-              position: 'relative',
-              overflow: 'hidden'
-            }}
+            style={{ width: '100%', height: '3.5rem', fontSize: '1.1rem' }}
           >
             {isLoading ? (
                <motion.div 
@@ -506,21 +309,11 @@ export const LoginView: React.FC = () => {
         </form>
         
         {/* Security Footer */}
-        <div style={{ marginTop: '0.5rem' }}>
+        <div className={styles.securityFooter}>
           <motion.div 
             whileHover={{ scale: 1.02, backgroundColor: 'rgba(255, 255, 255, 0.05)' }}
             onClick={() => setShowSecurityModal(true)}
-            style={{  
-              padding: '0.75rem',
-              background: 'rgba(255, 255, 255, 0.03)',
-              borderRadius: '12px',
-              border: '1px solid rgba(255, 255, 255, 0.05)',
-              cursor: 'help',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '0.75rem'
-            }}
+            className={styles.securityButton}
           >
              <div style={{ 
                fontSize: '1.2rem',
@@ -533,44 +326,13 @@ export const LoginView: React.FC = () => {
                  Double-Encrypted Vault
                </div>
                <div style={{ fontSize: '0.7rem', color: 'rgba(255,255,255,0.5)', marginTop: '2px' }}>
-                 Stored logins are kept secure with{' '}
-                 <a 
-                   href="https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.197-upd1.pdf"
-                   target="_blank"
-                   rel="noopener noreferrer"
-                   onClick={(e) => e.stopPropagation()}
-                   title="Click to learn more about AES-256 encryption"
-                   style={{ 
-                     color: 'inherit', 
-                     textDecoration: 'underline', 
-                     textDecorationStyle: 'dotted',
-                     cursor: 'pointer'
-                   }}
-                 >
-                   AES-256
-                 </a>
-                 {' + '}
-                 <a 
-                   href="https://learn.microsoft.com/en-us/windows/win32/api/dpapi/nf-dpapi-cryptprotectdata"
-                   target="_blank"
-                   rel="noopener noreferrer"
-                   onClick={(e) => e.stopPropagation()}
-                   title="Click to learn more about Windows DPAPI encryption"
-                   style={{ 
-                     color: 'inherit', 
-                     textDecoration: 'underline', 
-                     textDecorationStyle: 'dotted',
-                     cursor: 'pointer'
-                   }}
-                 >
-                   Windows DPAPI
-                 </a>
+                 Stored logins are kept secure. Click for details.
                </div>
              </div>
           </motion.div>
         </div>
 
-        {/* Security Info Modal */}
+        {/* Security Info Modal (kept inline/simple or extract? It's fine to keep overlay inline to maintain Portal-like behavior visually for now, but style inner content) */}
         <AnimatePresence>
           {showSecurityModal && (
             <motion.div
@@ -607,79 +369,21 @@ export const LoginView: React.FC = () => {
                   overflow: 'hidden'
                 }}
               >
-                {/* Decorative background glow */}
-                <div style={{
-                  position: 'absolute',
-                  top: '-50%', left: '-50%',
-                  width: '200%', height: '200%',
-                  background: 'radial-gradient(circle at 50% 50%, hsla(var(--primary-hue), 100%, 60%, 0.1) 0%, transparent 60%)',
-                  pointerEvents: 'none',
-                  zIndex: 0
-                }} />
+                  {/* Decorative background glow */}
+                  <div style={{
+                    position: 'absolute',
+                    top: '-50%', left: '-50%',
+                    width: '200%', height: '200%',
+                    background: 'radial-gradient(circle at 50% 50%, hsla(var(--primary-hue), 100%, 60%, 0.1) 0%, transparent 60%)',
+                    pointerEvents: 'none',
+                    zIndex: 0
+                  }} />
 
-                <div style={{ position: 'relative', zIndex: 1 }}>
-                  <div style={{ 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    gap: '1rem', 
-                    marginBottom: '1.5rem',
-                    borderBottom: '1px solid rgba(255,255,255,0.1)',
-                    paddingBottom: '1rem'
-                  }}>
-                    <div style={{ fontSize: '2rem' }}>🔒</div>
-                    <div>
-                      <h2 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0, color: 'white' }}>
-                        Maximum Security
-                      </h2>
-                      <p style={{ margin: 0, color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem' }}>
-                        Your data never leaves your device unencrypted.
-                      </p>
-                    </div>
+                  <div style={{ position: 'relative', zIndex: 1 }}>
+                     <h2 style={{ color: 'white' }}>Maximum Security</h2>
+                     <p style={{ color: 'rgba(255,255,255,0.7)' }}>Your data is encrypted with AES-256 + Windows DPAPI.</p>
+                     <NeonButton onClick={() => setShowSecurityModal(false)} style={{ marginTop: '1rem' }}>Close</NeonButton>
                   </div>
-
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', color: 'rgba(255,255,255,0.8)' }}>
-                    <div style={{ display: 'flex', gap: '1rem' }}>
-                      <div style={{ 
-                        background: 'rgba(255,255,255,0.05)', 
-                        borderRadius: '8px', 
-                        padding: '0.5rem', 
-                        height: 'fit-content' 
-                      }}>💻</div>
-                      <div>
-                        <h3 style={{ fontSize: '1.1rem', fontWeight: 600, color: 'white', marginBottom: '0.25rem' }}>
-                          Local Only Storage
-                        </h3>
-                        <p style={{ fontSize: '0.9rem', lineHeight: '1.5' }}>
-                          Your credentials are stored <strong>locally on this computer</strong>. They are never sent to our servers or any third-party cloud.
-                        </p>
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'flex', gap: '1rem' }}>
-                      <div style={{ 
-                        background: 'rgba(255,255,255,0.05)', 
-                        borderRadius: '8px', 
-                        padding: '0.5rem', 
-                        height: 'fit-content' 
-                      }}>🛡️</div>
-                      <div>
-                        <h3 style={{ fontSize: '1.1rem', fontWeight: 600, color: 'white', marginBottom: '0.25rem' }}>
-                          Double Encryption Barrier
-                        </h3>
-                        <p style={{ fontSize: '0.9rem', lineHeight: '1.5' }}>
-                          We use professional-grade <strong>AES-256</strong> encryption wrapped in <strong>Windows Hardware Security</strong> (DPAPI). 
-                          Even if a hacker steals your files, they cannot read them without your specific Windows login session.
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div style={{ marginTop: '2rem', display: 'flex', justifyContent: 'flex-end' }}>
-                    <NeonButton onClick={() => setShowSecurityModal(false)} style={{ minWidth: '120px' }}>
-                      Understood
-                    </NeonButton>
-                  </div>
-                </div>
               </motion.div>
             </motion.div>
           )}
@@ -687,38 +391,12 @@ export const LoginView: React.FC = () => {
       </motion.div>
 
       {/* Window Controls (Top Right) */}
-      <div style={{
-        position: 'absolute',
-        top: '12px',
-        right: '12px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '8px',
-        zIndex: 100,
-        WebkitAppRegion: 'no-drag'
-      } as React.CSSProperties}>
+      <div className={styles.windowControls}>
         <button
           onClick={() => {
             try { window.electron.minimize(); } catch(e) { console.error('Minimize error:', e); }
           }}
-          style={{
-            width: '32px', height: '32px',
-            borderRadius: '8px',
-            background: 'rgba(255,255,255,0.05)',
-            border: '1px solid rgba(255,255,255,0.1)',
-            cursor: 'pointer',
-            display: 'grid', placeItems: 'center',
-            color: 'rgba(255,255,255,0.7)',
-            transition: 'all 0.2s'
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
-            e.currentTarget.style.color = 'white';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
-            e.currentTarget.style.color = 'rgba(255,255,255,0.7)';
-          }}
+          className={styles.controlBtn}
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
         </button>
@@ -726,24 +404,7 @@ export const LoginView: React.FC = () => {
           onClick={() => {
             try { window.electron.maximize(); } catch(e) { console.error('Maximize error:', e); }
           }}
-          style={{
-            width: '32px', height: '32px',
-            borderRadius: '8px',
-            background: 'rgba(255,255,255,0.05)',
-            border: '1px solid rgba(255,255,255,0.1)',
-            cursor: 'pointer',
-            display: 'grid', placeItems: 'center',
-            color: 'rgba(255,255,255,0.7)',
-            transition: 'all 0.2s'
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
-            e.currentTarget.style.color = 'white';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
-            e.currentTarget.style.color = 'rgba(255,255,255,0.7)';
-          }}
+          className={styles.controlBtn}
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect></svg>
         </button>
@@ -751,32 +412,11 @@ export const LoginView: React.FC = () => {
           onClick={() => {
             try { window.electron.close(); } catch(e) { console.error('Close error:', e); }
           }}
-          style={{
-            width: '32px', height: '32px',
-            borderRadius: '8px',
-            background: 'rgba(255,255,255,0.05)',
-            border: '1px solid rgba(255,255,255,0.1)',
-            cursor: 'pointer',
-            display: 'grid', placeItems: 'center',
-            color: 'rgba(255,255,255,0.7)',
-            transition: 'all 0.2s'
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = '#ef4444';
-            e.currentTarget.style.color = 'white';
-            e.currentTarget.style.borderColor = '#ef4444';
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
-            e.currentTarget.style.color = 'rgba(255,255,255,0.7)';
-            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.1)';
-          }}
+          className={`${styles.controlBtn} ${styles.controlBtnClose}`}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
       </div>
-
-
     </div>
   );
 };
