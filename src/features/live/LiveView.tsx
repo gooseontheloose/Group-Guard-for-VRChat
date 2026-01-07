@@ -314,7 +314,7 @@ export const LiveView: React.FC = () => {
              let count = 0;
              for (const t of targets) {
                  // 2. Invite Loop
-                 const invRes = await window.electron.instance.inviteToCurrent(t.id);
+                 const invRes = await window.electron.instance.inviteToCurrent(t.id ?? '');
                  
                  if (!invRes.success && invRes.error === 'RATE_LIMIT') {
                     addLog(`[WARN] RATE LIMIT DETECTED! Cooling down for 10s...`, 'warn');
