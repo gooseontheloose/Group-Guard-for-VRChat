@@ -202,6 +202,7 @@ async function tryRestoreSession(): Promise<{
     // The SDK will automatically load any saved cookies from the Keyv store
     const clientOptions = {
       application: APP_INFO,
+      baseUrl: VRCHAT_API_BASE,
       keyv: getSessionStore()
     };
     
@@ -273,6 +274,7 @@ async function performLogin(username: string, password: string, twoFactorCode?: 
     // Create VRChat client - SDK v2 pattern
     const clientOptions = {
       application: APP_INFO,
+      baseUrl: VRCHAT_API_BASE,
       // Use Keyv for persistent session storage (cookies persist across restarts!)
       keyv: getSessionStore(),
     };
