@@ -267,6 +267,7 @@ export interface GroupAnnouncementConfig {
     periodicEnabled: boolean;
     periodicMessage: string;
     periodicIntervalMinutes: number;
+    displayDurationSeconds?: number;
 }
 
 export interface ElectronAPI {
@@ -370,6 +371,8 @@ export interface ElectronAPI {
       inviteSelf: (worldId: string, instanceId: string) => Promise<{ success: boolean; error?: string }>;
       getInstanceInfo: () => Promise<{ success: boolean; worldId?: string; instanceId?: string; name?: string; imageUrl?: string; error?: string }>;
       onEntityUpdate: (callback: (entity: LiveEntity) => void) => () => void;
+      massInviteFriends: (options: { filterAutoMod?: boolean; delayMs?: number }) => Promise<{ success: boolean; invited?: number; skipped?: number; failed?: number; total?: number; error?: string }>;
+      onMassInviteProgress: (callback: (data: { sent: number; skipped: number; failed: number; total: number; current?: string; done?: boolean }) => void) => () => void;
       
       getCurrentGroup: () => Promise<string | null>;
       onGroupChanged: (callback: (groupId: string | null) => void) => () => void;

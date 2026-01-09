@@ -5,6 +5,7 @@ import { getVRChatClient, getCurrentUserId } from './AuthService';
 import { instanceLoggerService } from './InstanceLoggerService';
 import { logWatcherService } from './LogWatcherService';
 import { groupAuthorizationService } from './GroupAuthorizationService';
+import { evaluateUser } from './AutoModLogic';
 
 
 // ============================================
@@ -561,7 +562,7 @@ export function setupInstanceHandlers() {
              logger.info(`[InstanceService] Inviting ${targetsToInvite.length} users from previous session`);
              
              // Helper to emit progress to all windows
-             const emitProgress = (data: { sent: number; failed: number; total: number; current?: string; done?: boolean }) => {
+             const emitProgress = (data: { sent: number; skipped: number; failed: number; total: number; current?: string; done?: boolean }) => {
                  BrowserWindow.getAllWindows().forEach(win => {
                      if (!win.isDestroyed()) {
                          win.webContents.send('rally:progress', data);
@@ -576,7 +577,7 @@ export function setupInstanceHandlers() {
              const total = targetsToInvite.length;
              
              // Emit initial state
-             emitProgress({ sent: 0, failed: 0, total, done: false });
+             emitProgress({ sent: 0, skipped: 0, failed: 0, total, done: false });
              
              for (const userId of targetsToInvite) {
                  try {
@@ -591,7 +592,7 @@ export function setupInstanceHandlers() {
                      logger.info(`[InstanceService] ✓ Invite sent to ${userId} (${successCount}/${total})`);
                      
                      // Emit progress
-                     emitProgress({ sent: successCount, failed: failCount, total, current: userId });
+                     emitProgress({ sent: successCount, skipped: 0, failed: failCount, total, current: userId });
                      
                      // Small delay between invites to avoid rate limiting
                      await sleep(350);
@@ -602,7 +603,7 @@ export function setupInstanceHandlers() {
                      logger.warn(`[InstanceService] ✗ Failed to invite ${userId}: ${errMsg}`);
                      
                      // Emit progress
-                     emitProgress({ sent: successCount, failed: failCount, total });
+                     emitProgress({ sent: successCount, skipped: 0, failed: failCount, total });
                      
                      if (err.response?.status === 429) {
                          errors.push(`Rate limited after ${successCount} invites`);
@@ -613,7 +614,7 @@ export function setupInstanceHandlers() {
              }
              
              // Emit completion
-             emitProgress({ sent: successCount, failed: failCount, total, done: true });
+             emitProgress({ sent: successCount, skipped: 0, failed: failCount, total, done: true });
              
              return { 
                  success: true, 
@@ -628,6 +629,181 @@ export function setupInstanceHandlers() {
              logger.error(`[InstanceService] Rally from session failed`, e);
              return { success: false, error: err.message };
          }
+    });
+
+    // MASS INVITE FRIENDS
+    ipcMain.handle('instance:mass-invite-friends', async (_event, options: { filterAutoMod?: boolean; delayMs?: number }) => {
+        const client = getVRChatClient();
+        if (!client) throw new Error("Not authenticated");
+
+        try {
+            // 1. Check current instance
+            const currentWorldId = instanceLoggerService.getCurrentWorldId();
+            const currentInstanceId = instanceLoggerService.getCurrentInstanceId();
+            
+            if (!currentWorldId || !currentInstanceId) {
+                return { success: false, error: "You must be in an instance to invite friends" };
+            }
+            
+            const currentLocation = `${currentWorldId}:${currentInstanceId}`;
+            logger.info(`[InstanceService] Starting mass invite to ${currentLocation}`);
+
+            // 2. Fetch ALL Friends (Paginated)
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const allFriends: any[] = [];
+            let offset = 0;
+            let hasMore = true;
+            
+            // Limit to prevent infinite loops (e.g. 500 friends max for now?)
+            const MAX_FRIENDS = 500;
+            
+            logger.info(`[InstanceService] Fetching friend list...`);
+            
+            while (hasMore && allFriends.length < MAX_FRIENDS) {
+                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                 const res = await (client as any).getFriends({ 
+                    query: { n: 100, offset, offline: false } // offline: false = only online/active
+                 });
+                 const friends = res.data || [];
+                 if (friends.length === 0) {
+                     hasMore = false;
+                 } else {
+                     allFriends.push(...friends);
+                     offset += friends.length;
+                     if (friends.length < 100) hasMore = false;
+                     await sleep(500); // polite api usage
+                 }
+            }
+
+            logger.info(`[InstanceService] Found ${allFriends.length} online friends`);
+
+             // 3. Filter targets
+             const currentPlayers = logWatcherService.getPlayers();
+             const currentUserId = getCurrentUserId();
+             
+             // Pre-filter: online, not me, not already here
+             let targets = allFriends.filter(f => 
+                  f.id !== currentUserId && 
+                  f.location !== 'offline' && // Double check
+                  !currentPlayers.some(p => p.userId === f.id)
+             );
+
+             // Filter already invited in session
+             if (recruitmentCache.has(currentLocation)) {
+                 const invitedSet = recruitmentCache.get(currentLocation)!;
+                 targets = targets.filter(f => !invitedSet.has(f.id));
+             }
+
+             logger.info(`[InstanceService] Candidates after basic filtering: ${targets.length}`);
+
+             // 4. AutoMod Filter
+             // eslint-disable-next-line @typescript-eslint/no-explicit-any
+             const finalTargets: any[] = [];
+             let skippedCount = 0;
+
+             if (options.filterAutoMod) {
+                 logger.info(`[InstanceService] Applying AutoMod filters...`);
+                 for (const friend of targets) {
+                      const evaluation = await evaluateUser({
+                          id: friend.id,
+                          displayName: friend.displayName,
+                          bio: friend.bio,
+                          status: friend.status,
+                          statusDescription: friend.statusDescription,
+                          tags: friend.tags,
+                          ageVerificationStatus: friend.ageVerificationStatus
+                          // pronouns not in standard friend obj?
+                      });
+                      
+                      if (evaluation.action === 'ALLOW') {
+                          finalTargets.push(friend);
+                      } else {
+                          skippedCount++;
+                          logger.info(`[InstanceService] Skipped friend ${friend.displayName} due to AutoMod (${evaluation.reason})`);
+                      }
+                 }
+             } else {
+                 finalTargets.push(...targets);
+             }
+
+             if (finalTargets.length === 0) {
+                 return { success: false, error: "No friends found to invite (all offline, already here, or filtered)" };
+             }
+
+             // 5. Send Invites
+             const emitProgress = (data: { sent: number; skipped: number; failed: number; total: number; current?: string; done?: boolean }) => {
+                BrowserWindow.getAllWindows().forEach(win => {
+                    if (!win.isDestroyed()) {
+                        win.webContents.send('mass-invite:progress', data);
+                    }
+                });
+            };
+
+            let successCount = 0;
+            let failCount = 0;
+            const errors: string[] = [];
+            const total = finalTargets.length;
+            const delayMs = options.delayMs || 1500; // Slower default for mass invite
+
+            emitProgress({ sent: 0, skipped: skippedCount, failed: 0, total, done: false });
+
+            for (const friend of finalTargets) {
+                 try {
+                     // Check if invited recently (cache might have updated if parallel?)s
+                     if (recruitmentCache.get(currentLocation)?.has(friend.id)) {
+                         continue;
+                     }
+
+                     logger.info(`[InstanceService] Inviting friend ${friend.displayName} (${friend.id})...`);
+                     
+                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                     await (client as any).inviteUser({ 
+                         path: { userId: friend.id },
+                         body: { instanceId: currentLocation }
+                     });
+                     
+                     successCount++;
+                     
+                     // Update cache
+                     if (!recruitmentCache.has(currentLocation)) {
+                        recruitmentCache.set(currentLocation, new Set());
+                     }
+                     recruitmentCache.get(currentLocation)!.add(friend.id);
+
+                     emitProgress({ sent: successCount, skipped: skippedCount, failed: failCount, total, current: friend.displayName });
+                     
+                     await sleep(delayMs);
+
+                 } catch (inviteErr: unknown) {
+                     const err = inviteErr as VRChatApiError;
+                     failCount++;
+                     const errMsg = err.response?.data?.error?.message || err.message;
+                     logger.warn(`[InstanceService] Failed to invite ${friend.displayName}: ${errMsg}`);
+                     
+                     emitProgress({ sent: successCount, skipped: skippedCount, failed: failCount, total });
+                     
+                     if (err.response?.status === 429) {
+                         errors.push(`Rate limited after ${successCount} invites`);
+                         break;
+                     }
+                 }
+            }
+
+            emitProgress({ sent: successCount, skipped: skippedCount, failed: failCount, total, done: true });
+            
+            return {
+                success: true,
+                invited: successCount,
+                skipped: skippedCount,
+                failed: failCount,
+                total: finalTargets.length
+            };
+
+        } catch (e: unknown) {
+            const err = e as VRChatApiError;
+            logger.error(`[InstanceService] Mass invite failed`, e);
+            return { success: false, error: err.message };
+        }
     });
     
     // CLOSE INSTANCE - Using SDK closeInstance method

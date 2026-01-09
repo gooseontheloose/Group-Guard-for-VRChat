@@ -14,6 +14,7 @@ export interface GroupAnnouncementConfig {
     periodicEnabled: boolean;
     periodicMessage: string;
     periodicIntervalMinutes: number;
+    displayDurationSeconds?: number;
 }
 
 export interface OscAnnouncementStore {
@@ -26,7 +27,8 @@ const DEFAULT_GROUP_CONFIG: GroupAnnouncementConfig = {
     greetingMessageMembers: "",
     periodicEnabled: false,
     periodicMessage: "🛡️ This instance is protected by Group Guard.",
-    periodicIntervalMinutes: 15
+    periodicIntervalMinutes: 15,
+    displayDurationSeconds: 10
 };
 
 class OscAnnouncementService {
@@ -34,6 +36,7 @@ class OscAnnouncementService {
     private activeGroupId: string | null = null;
     private activeGroupName: string = 'Group';
     private periodicTimer: NodeJS.Timeout | null = null;
+    private clearMessageTimer: NodeJS.Timeout | null = null;
     private greetedPlayers: Set<string> = new Set();
     private currentPlayers: Set<string> = new Set(); // To track who is actually here if we want to be smart
 
@@ -161,7 +164,7 @@ class OscAnnouncementService {
                 .replace(/\[User\]/g, event.displayName)
                 .replace(/\[Group\]/g, this.activeGroupName);
 
-            this.sendOscMessage(finalMessage);
+            this.sendOscMessage(finalMessage, currentConfig.displayDurationSeconds);
 
         }, 10000);
     }
@@ -188,7 +191,7 @@ class OscAnnouncementService {
             }
 
             const message = currentConfig.periodicMessage.replace(/\[Group\]/g, this.activeGroupName);
-            this.sendOscMessage(message);
+            this.sendOscMessage(message, currentConfig.displayDurationSeconds);
 
         }, config.periodicIntervalMinutes * 60 * 1000);
     }
@@ -200,11 +203,26 @@ class OscAnnouncementService {
         }
     }
 
-    private sendOscMessage(text: string) {
+    private sendOscMessage(text: string, durationSeconds?: number) {
+        // Clear pending clear-timer
+        if (this.clearMessageTimer) {
+            clearTimeout(this.clearMessageTimer);
+            this.clearMessageTimer = null;
+        }
+
         // VRChat Chatbox Limit is 144 chars. 
         const SAFE_TEXT = text.substring(0, 144);
         logger.info(`Sending OSC announcement: "${SAFE_TEXT}"`);
         oscService.send('/chatbox/input', [SAFE_TEXT, true, false]); // Message, Instant, No Sound
+        
+        // Schedule clear if duration is set and > 0
+        if (durationSeconds && durationSeconds > 0) {
+             this.clearMessageTimer = setTimeout(() => {
+                 logger.info('Clearing OSC announcement (duration expired)');
+                 oscService.send('/chatbox/input', ["", true, false]);
+                 this.clearMessageTimer = null;
+             }, durationSeconds * 1000);
+        }
     }
 
     // Public API for IPC

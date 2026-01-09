@@ -174,7 +174,7 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
     });
   },
 
-  handleDisconnected: (code: number, reason: string, willReconnect: boolean) => {
+  handleDisconnected: (_code: number, _reason: string, willReconnect: boolean) => {
     set({ 
       connected: false,
       connecting: willReconnect

@@ -95,37 +95,9 @@
   box-shadow: 0 0 5px var(--color-success);
 }
 
-.auditTabs {
-  display: flex;
-  gap: 4px;
-  margin-bottom: 0.5rem;
-  flex: 0 0 auto;
-  flex-wrap: wrap;
-}
 
-.auditTab {
-  padding: 3px 8px;
-  font-size: 0.6rem;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
-  color: var(--color-text-dim);
-  cursor: pointer;
-  transition: all 0.15s ease;
-}
+/* Audit Tabs removed in favor of Filter Dropdown */
 
-.auditTab:hover {
-  background: rgba(255, 255, 255, 0.1);
-  color: var(--color-text-secondary);
-}
-
-.auditTabActive {
-  background: rgba(var(--color-primary-rgb), 0.2);
-  border-color: var(--color-primary);
-  color: var(--color-primary);
-}
 
 .logList {
   flex: 1;

@@ -18,7 +18,8 @@ import { MemberSearchWidget } from './widgets/MemberSearchWidget';
 
 import { StatTile } from './components/StatTile';
 import styles from './DashboardView.module.css';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Filter, ChevronDown, Check } from 'lucide-react';
 
 const containerVariants = {
     hidden: { opacity: 0 },
@@ -81,9 +82,9 @@ export const DashboardView: React.FC = memo(() => {
   const hasFetchedMembersRef = React.useRef(false);
   const lastGroupIdRef = React.useRef<string | null>(null);
   
-  // Audit filter state
   type AuditFilterType = 'all' | 'joins' | 'requests' | 'invited' | 'bans' | 'instances' | 'mod' | 'settings';
   const [auditFilter, setAuditFilter] = useState<AuditFilterType>('all');
+  const [showFilterMenu, setShowFilterMenu] = useState(false);
   
   // Filter logs based on selected tab
   const filteredLogs = useMemo(() => {
@@ -308,23 +309,103 @@ export const DashboardView: React.FC = memo(() => {
                 </div>
                 
                 {/* Filter Tabs - Compact */}
-                <div className={styles.auditTabs}>
-                    {(['all', 'joins', 'requests', 'bans'] as const).map(tab => (
-                        <button
-                            key={tab}
-                            className={`${styles.auditTab} ${auditFilter === tab ? styles.auditTabActive : ''}`}
-                            onClick={() => setAuditFilter(tab as AuditFilterType)}
-                            title={tab.toUpperCase()}
-                        >
-                            {tab === 'all' ? 'ALL' : 
-                             tab === 'joins' ? 'JOINS' : 
-                             tab === 'requests' ? 'REQS' :
-                             tab === 'bans' ? 'BANS' : ''}
-                        </button>
-                    ))}
-                    <button className={styles.auditTab} onClick={() => setAuditFilter('all')} style={{ marginLeft: 'auto', opacity: 0.5 }}>
-                        ⋮
-                    </button>
+                {/* Filter Dropdown */}
+                <div style={{ position: 'relative', zIndex: 10 }}>
+                    <NeonButton 
+                        size="sm" 
+                        variant="ghost" // Using ghost to blend in better, or specific style
+                        onClick={() => setShowFilterMenu(!showFilterMenu)}
+                        style={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: '6px',
+                            border: showFilterMenu ? '1px solid rgba(255,255,255,0.2)' : '1px solid transparent',
+                            background: showFilterMenu ? 'rgba(255,255,255,0.05)' : 'transparent'
+                        }}
+                    >
+                        <Filter size={14} />
+                        <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>
+                            {auditFilter === 'all' ? 'Filter Feed' : auditFilter.toUpperCase()}
+                        </span>
+                        <ChevronDown size={14} style={{ opacity: 0.7, transform: showFilterMenu ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
+                    </NeonButton>
+
+                    <AnimatePresence>
+                        {showFilterMenu && (
+                            <>
+                            <div 
+                                style={{ position: 'fixed', inset: 0, zIndex: 40 }} 
+                                onClick={() => setShowFilterMenu(false)}
+                            />
+                            <motion.div
+                                initial={{ opacity: 0, y: -5, scale: 0.95 }}
+                                animate={{ opacity: 1, y: 0, scale: 1 }}
+                                exit={{ opacity: 0, y: -5, scale: 0.95 }}
+                                transition={{ duration: 0.1 }}
+                                style={{
+                                    position: 'absolute',
+                                    top: '100%',
+                                    right: 0,
+                                    zIndex: 50,
+                                    marginTop: '8px',
+                                    minWidth: '180px',
+                                    background: '#0a0a0a',
+                                    border: '1px solid rgba(255,255,255,0.1)',
+                                    borderRadius: '12px',
+                                    padding: '6px',
+                                    boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    gap: '2px'
+                                }}
+                            >
+                                <div style={{ 
+                                    padding: '6px 10px', 
+                                    fontSize: '0.7rem', 
+                                    color: 'var(--color-text-dim)', 
+                                    textTransform: 'uppercase', 
+                                    letterSpacing: '0.05em',
+                                    fontWeight: 600
+                                }}>
+                                    Filter Events
+                                </div>
+                                
+                                {(['all', 'joins', 'requests', 'invited', 'bans', 'mod', 'instances', 'settings'] as const).map(option => (
+                                     <div
+                                        key={option}
+                                        onClick={() => {
+                                            setAuditFilter(option);
+                                            setShowFilterMenu(false);
+                                        }}
+                                        style={{
+                                            padding: '8px 10px',
+                                            borderRadius: '8px',
+                                            cursor: 'pointer',
+                                            color: auditFilter === option ? '#fff' : 'rgba(255,255,255,0.7)',
+                                            background: auditFilter === option ? 'rgba(255,255,255,0.1)' : 'transparent',
+                                            fontSize: '0.85rem',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            justifyContent: 'space-between',
+                                            transition: 'all 0.1s'
+                                        }}
+                                        onMouseEnter={(e) => {
+                                            if (auditFilter !== option) e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
+                                        }}
+                                        onMouseLeave={(e) => {
+                                            if (auditFilter !== option) e.currentTarget.style.background = 'transparent';
+                                        }}
+                                     >
+                                        <span style={{ textTransform: 'capitalize' }}>
+                                            {option === 'mod' ? 'Moderation' : option}
+                                        </span>
+                                        {auditFilter === option && <Check size={14} color="var(--color-primary)" />}
+                                     </div>
+                                 ))}
+                            </motion.div>
+                            </>
+                        )}
+                    </AnimatePresence>
                 </div>
                 
                 <div className={styles.logList}>

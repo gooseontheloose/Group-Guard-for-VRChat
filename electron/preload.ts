@@ -147,6 +147,12 @@ import { contextBridge, ipcRenderer } from 'electron';
              const handler = (_event: Electron.IpcRendererEvent, entity: { id: string; displayName: string; rank: string; isGroupMember: boolean; status: string; avatarUrl?: string; lastUpdated: number }) => callback(entity);
              ipcRenderer.on('instance:entity-update', handler);
              return () => ipcRenderer.removeListener('instance:entity-update', handler);
+         },
+         massInviteFriends: (options: { filterAutoMod?: boolean; delayMs?: number }) => ipcRenderer.invoke('instance:mass-invite-friends', options || {}),
+         onMassInviteProgress: (callback: (data: { sent: number; skipped: number; failed: number; total: number; current?: string; done?: boolean }) => void) => {
+             const handler = (_event: Electron.IpcRendererEvent, data: { sent: number; skipped: number; failed: number; total: number; current?: string; done?: boolean }) => callback(data);
+             ipcRenderer.on('mass-invite:progress', handler);
+             return () => ipcRenderer.removeListener('mass-invite:progress', handler);
          }
      },
 

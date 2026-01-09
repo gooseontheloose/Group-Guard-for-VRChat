@@ -379,7 +379,7 @@ export function setupGroupHandlers() {
 
       // 3. Merge and Sort
       interface AuditLogEntry { created_at: string; [key: string]: unknown; }
-      const allLogs = [...setLogs, ...localLogs].sort((a: AuditLogEntry, b: AuditLogEntry) => {
+      const allLogs = ([...setLogs, ...localLogs] as AuditLogEntry[]).sort((a, b) => {
           const dateA = new Date(a.created_at).getTime();
           const dateB = new Date(b.created_at).getTime();
           return dateB - dateA; // Newest first

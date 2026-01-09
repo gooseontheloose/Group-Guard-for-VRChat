@@ -1,73 +1,106 @@
-# React + TypeScript + Vite
+# Group Guard
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+**Status**: 🚧 Alpha / Development
 
-Currently, two official plugins are available:
+> **The ultimate command center for VRChat Group Instances.**
+> Manage instances, automate security, and rally your community with powerful tools.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+![Group Guard Banner](https://via.placeholder.com/800x200.png?text=Group+Guard+UI+Placeholder)
 
-## React Compiler
+## 📖 Introduction
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+**Group Guard** is a desktop application designed for VRChat Group Owners and Moderators. It seamlessly integrates with the VRChat API and local log files to provide a real-time "God View" of your group instances.
 
-## Expanding the ESLint configuration
+Unlike simple mods or discord bots, Group Guard is a **standalone external tool** that runs on your PC, ensuring compliance with VRChat's Terms of Service by only reading logs and using the official API (no game memory injection).
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## ✨ Key Features
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+### 🛡️ AutoMod & Security
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+Automate your instance security to keep trolls and bad actors out.
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+- **Rule Engine**: Create custom rules based on Trust Rank, Account Age, Keywords (in Bio/Status), and more.
+- **Actions**: Automatically "Block" (Kick) or "Notify" when a rule is triggered.
+- **Ban Evasion Detection**: (Planned) Heuristics to flag potential ban evaders.
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### 📡 Live Ops Command Center
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+Monitor and control your active instance in real-time.
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+- **Instance Monitor**: See exactly who is in your instance, their extensive details, and when they joined.
+- **Scan Sector**: One-click scan to refresh player lists from logs.
+- **Mass Invite**: Invite all your online friends to the current instance with smart filtering (AutoMod checks, already present checks).
+- **Rally Forces**: Invite users from a previous session file—perfect for re-hosting crashed instances.
+
+### 👥 Group Management
+
+Direct integration with your VRChat Groups.
+
+- **Member Management**: View, search, and manage group members.
+- **Bans & Kicks**: Quickly ban or kick users from the group directly from the UI.
+- **Instance Browser**: View all active instances for your groups and join them instantly.
+
+### 💬 OSC Chatbox Integration
+
+Enhance in-game communication without typing.
+
+- **Announcer**: Automatically send welcome messages to new joins or periodic announcements (e.g., "Join our Discord!").
+- **MagicChatBox Compatible**: Built to work alongside other OSC tools.
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- Windows 10/11
+- [Node.js](https://nodejs.org/) (v16+)
+- VRChat Account (with VRC+ for some features, though not strictly required)
+
+### Installation (Development)
+
+1.  **Clone the repo**:
+    ```bash
+    git clone https://github.com/YourUsername/group-guard.git
+    cd group-guard
+    ```
+2.  **Install dependencies**:
+    ```bash
+    npm install
+    ```
+3.  **Run locally**:
+    ```bash
+    npm run dev
+    ```
+    This will start both the Electron backend and the React frontend in hot-reload mode.
+
+### Usage Guide
+
+1.  **Login**: Launch the app and log in with your VRChat credentials. (Supports 2FA).
+2.  **Select Group**: Choose the group you want to manage from the sidebar.
+3.  **Join World**: Enter a VRChat instance. Group Guard uses your VRChat log files to detect where you are.
+4.  **Configure**:
+    - Go to **Settings** to point the app to your VRChat install folder (usually automatic).
+    - Go to **AutoMod** to set up your protection rules.
+5.  **Monitor**: Switch to the **Dashboard** to see the live feed of events and players.
+
+## ⚠️ Safety & Compliance
+
+Group Guard is an **external tool**. It does **not** modify the game client, inject code, or read memory. It interacts with VRChat solely through:
+
+1.  **VRChat API**: Standard web requests (like the website).
+2.  **Log Files**: Reading text logs generated by VRChat (`output_log.txt`).
+3.  **OSC**: One-way communication for chatbox messages.
+
+_Use responsibly. Automated actions (like mass inviting) are rate-limited to avoid API spam, but you are responsible for your account's actions._
+
+## 🛠️ Tech Stack
+
+- **Electron**: Desktop Runtime
+- **React**: UI Framework
+- **TypeScript**: Logic & Type Safety
+- **Vite**: Build Tool
+- **Framer Motion**: Animations
+- **Electron Store**: Local Data Persistence
+
+## 📄 License
+
+MIT License. See `LICENSE` for more information.

@@ -5,7 +5,7 @@ import { useGroupStore } from '../../../stores/groupStore';
 import { NeonButton } from '../../../components/ui/NeonButton';
 import { AnimatePresence, motion } from 'framer-motion';
 import type { GroupAnnouncementConfig } from '../../../types/electron';
-import { MessageSquare, Settings } from 'lucide-react';
+import { MessageSquare, Settings, Clock } from 'lucide-react';
 
 // Configuration Popup Modal
 const ConfigModal: React.FC<{
@@ -252,6 +252,42 @@ const ConfigModal: React.FC<{
                                                 }}
                                             />
                                         )}
+                                    </div>
+                                    
+                                    {/* Display Duration */}
+                                    <div style={{ 
+                                        background: 'rgba(255, 255, 255, 0.03)', 
+                                        border: '1px solid rgba(255, 255, 255, 0.1)',
+                                        borderRadius: '8px',
+                                        padding: '1rem',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'space-between'
+                                    }}>
+                                        <label style={{ color: 'rgba(255,255,255, 0.9)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.9rem' }}>
+                                            <Clock size={16} color="#dda0dd" />
+                                            Display Duration
+                                        </label>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.8rem', color: 'var(--color-text-dim)' }}>
+                                            Show for
+                                            <input 
+                                                type="number" 
+                                                min="1"
+                                                max="60"
+                                                value={localConfig.displayDurationSeconds ?? 10}
+                                                onChange={(e) => setLocalConfig({ ...localConfig, displayDurationSeconds: parseFloat(e.target.value) || 5 })}
+                                                style={{ 
+                                                    width: '50px', 
+                                                    background: 'rgba(0,0,0,0.3)', 
+                                                    border: '1px solid rgba(255,255,255,0.1)', 
+                                                    color: 'white', 
+                                                    textAlign: 'center', 
+                                                    borderRadius: '4px', 
+                                                    padding: '4px 8px'
+                                                }}
+                                            />
+                                            seconds
+                                        </div>
                                     </div>
 
                                     {/* Help Text */}

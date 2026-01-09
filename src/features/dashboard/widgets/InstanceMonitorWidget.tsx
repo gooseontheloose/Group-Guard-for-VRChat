@@ -1,15 +1,19 @@
 
-import React from 'react';
+import React, { useState } from 'react';
 import { GlassPanel } from '../../../components/ui/GlassPanel';
 import { LiveBadge } from '../../../components/ui/LiveBadge';
 import { useGroupStore } from '../../../stores/groupStore';
 import { useInstanceMonitorStore } from '../../../stores/instanceMonitorStore';
 import { useUserProfileStore } from '../../../stores/userProfileStore';
+import { MassInviteDialog } from '../dialogs/MassInviteDialog';
+import { NeonButton } from '../../../components/ui/NeonButton';
+import { Users } from 'lucide-react';
 
 export const InstanceMonitorWidget: React.FC = () => {
     const { openProfile } = useUserProfileStore();
     const { currentWorldName, currentWorldId, currentLocation, currentGroupId, players } = useInstanceMonitorStore();
     const { instances, myGroups, selectedGroup: activeGroup } = useGroupStore();
+    const [showMassInvite, setShowMassInvite] = useState(false);
 
     // Check if current location matches any active group instance (Strict or Robust)
     let groupInstance = currentLocation ? instances.find(inst => {
@@ -49,6 +53,7 @@ export const InstanceMonitorWidget: React.FC = () => {
                  name: currentWorldName || 'Unknown World'
              },
              group: activeGroup
+         // eslint-disable-next-line @typescript-eslint/no-explicit-any
          } as any;
     }
 
@@ -145,6 +150,17 @@ export const InstanceMonitorWidget: React.FC = () => {
                          textOverflow: 'ellipsis'
                      }}>{currentWorldId}</div>
                 </div>
+                {/* Mass Invite Button (Small) */}
+                <NeonButton 
+                    size="sm" 
+                    variant="ghost" 
+                    onClick={() => setShowMassInvite(true)}
+                    title="Mass Invite Friends"
+                    style={{ padding: '4px 8px', marginRight: '6px' }}
+                >
+                    <Users size={14} />
+                </NeonButton>
+                
                 <div style={{ textAlign: 'right', flex: '0 0 auto', marginTop: '-4px' }}>
                     <div style={{ fontSize: '1.6rem', fontWeight: 'bold', color: 'var(--color-primary)', lineHeight: 1 }}>{playerCount}</div>
                     <div style={{ fontSize: '0.6rem', color: 'var(--color-text-dim)', fontWeight: 600 }}>PLAYERS</div>
@@ -191,6 +207,8 @@ export const InstanceMonitorWidget: React.FC = () => {
                     </div>
                 )}
             </div>
+            {/* Mass Invite Dialog */ }
+            <MassInviteDialog isOpen={showMassInvite} onClose={() => setShowMassInvite(false)} />
         </GlassPanel>
     );
 };
