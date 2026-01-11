@@ -2,6 +2,7 @@ import React, { useEffect, useState, useMemo, useCallback, lazy, Suspense } from
 import { AppLayout } from './components/layout/AppLayout';
 import { TitleBar } from './components/layout/TitleBar';
 import { GlobalModals } from './components/layout/GlobalModals';
+import { ToastContainer } from './components/ui/ToastContainer';
 import { LoginView } from './features/auth/LoginView';
 import { useAuthStore } from './stores/authStore';
 import { useGroupStore } from './stores/groupStore';
@@ -10,6 +11,7 @@ import { motion } from 'framer-motion';
 import { NeonDock, type DockView } from './components/layout/NeonDock';
 import { usePipelineInit } from './hooks/usePipelineInit';
 import { useInstanceMonitorInit } from './hooks/useInstanceMonitorInit';
+import { useAutoModNotifications } from './hooks/useAutoModNotifications';
 import { SetupView } from './features/setup/SetupView';
 
 import { AnimatePresence } from 'framer-motion';
@@ -23,6 +25,7 @@ const SettingsView = lazy(() => import('./features/settings/SettingsView').then(
 const DatabaseView = lazy(() => import('./features/database/DatabaseView').then(m => ({ default: m.DatabaseView })));
 const AutoModView = lazy(() => import('./features/automod/AutoModView').then(m => ({ default: m.AutoModView })));
 const LiveView = lazy(() => import('./features/live/LiveView').then(m => ({ default: m.LiveView })));
+const AuditLogView = lazy(() => import('./features/audit/AuditLogView').then(m => ({ default: m.AuditLogView })));
 
 // Simple loading fallback
 const ViewLoader = () => (
@@ -91,6 +94,9 @@ function App() {
   // Initialize Live Log Watcher
   useInstanceMonitorInit(isAuthenticated);
 
+  // Initialize AutoMod Notifications
+  useAutoModNotifications();
+
   const [isUpdateReady, setIsUpdateReady] = useState(false);
 
   // Listen for updates
@@ -103,6 +109,8 @@ function App() {
           if (downloaded) {
               setIsUpdateReady(true);
           }
+      }).catch(err => {
+          console.error('Failed to check update status:', err);
       });
 
       const unsubscribe = window.electron.updater.onUpdateDownloaded(() => {
@@ -235,12 +243,7 @@ function App() {
       case 'live':
         return <LiveView />;
       case 'audit':
-        return (
-            <GlassPanel style={{ padding: '2rem', textAlign: 'center' }}>
-                <h2>Audit Logs</h2>
-                <p style={{ color: 'var(--color-text-dim)' }}>Coming Soon</p>
-            </GlassPanel>
-        );
+        return <AuditLogView />;
       case 'database':
         return <DatabaseView />;
       case 'main':
@@ -310,11 +313,14 @@ function App() {
   }
 
   return (
-    <AnimatePresence mode="wait">
-        <PageTransition key={screenKey}>
-            {currentScreen}
-        </PageTransition>
-    </AnimatePresence>
+    <>
+        <ToastContainer />
+        <AnimatePresence mode="wait">
+            <PageTransition key={screenKey}>
+                {currentScreen}
+            </PageTransition>
+        </AnimatePresence>
+    </>
   );
 }
 

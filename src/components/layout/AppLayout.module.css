@@ -19,9 +19,8 @@
 .contentWrapper {
   flex: 1;
   overflow: hidden; /* Prevent huge scrollbar */
-  padding: 2rem;
-  padding-top: 4rem; /* More space for Drag Region and potential top bar */
-  padding-bottom: 9rem; /* generous space for the Neon Dock at the bottom */
+  padding: 0;
+  padding-top: 40px; /* Space for TitleBar (40px) + Drag Region */
   display: flex;
   flex-direction: column;
 }

@@ -3,6 +3,7 @@ import path from 'path';
 import log from 'electron-log';
 import { storageService } from './StorageService';
 import fs from 'fs';
+import crypto from 'crypto';
 
 const logger = log.scope('DatabaseService');
 
@@ -54,10 +55,10 @@ class DatabaseService {
     
     try {
       // Check if Session table exists
-      const result = await this.prisma.$queryRaw`SELECT name FROM sqlite_master WHERE type='table' AND name='Session';`;
-      if (Array.isArray(result) && result.length > 0) {
-        return; // Tables exist
-      }
+      // const result = await this.prisma.$queryRaw`SELECT name FROM sqlite_master WHERE type='table' AND name='Session';`;
+      // if (Array.isArray(result) && result.length > 0) {
+      //   return; // Tables exist
+      // }
 
       logger.info('Tables not found. Creating initial schema...');
 
@@ -158,7 +159,7 @@ class DatabaseService {
       return (this.getClient() as any).autoModLog.create({
           data: {
               ...data,
-              id: require('crypto').randomUUID() // Ensure we generate ID if prisma middleware doesn't
+              id: crypto.randomUUID() // Ensure we generate ID if prisma middleware doesn't
           }
       });
   }
@@ -197,6 +198,98 @@ class DatabaseService {
   public async deleteAllSessions() {
       await this.getClient().logEntry.deleteMany({});
       return this.getClient().session.deleteMany({});
+  }
+
+  // ============================================
+  // ANALYTICS
+  // ============================================
+
+  public async getDailyActivityStats(groupId: string, days: number = 30) {
+      // Aggregate Log Entries by Date
+      // We look for 'group.user.join', 'group.user.kick', 'group.user.ban', 'automod' events related to this group.
+      
+      // Since logs are unified in LogEntry (remote) and AutoModLog (local), 
+      // AND remote Audit Logs are *fetched* live but not stored in DB permanently in this tailored DB schema (LogEntry is for Session Logs)...
+      // WAIT: The current "Audit Logs" tab fetches remote API data live. It doesn't sync to DB history.
+      // THE DB "LogEntry" Table tracks *Session* events (local instance logs).
+      // "AutoModLog" tracks AutoMod actions.
+      
+      // CHALLENGE: User wants "Growth Chart".
+      // Remote Audit Logs (API) are the only source of truth for "Joins" when the app wasn't running?
+      // OR does the user only care about "Activity while handling"?
+      // "New Joins" usually come from the "Group Audit Log".
+      // We can't query the API for *historical stats* easily without fetching thousands of pages.
+      // PROPOSAL: We will build charts based on LOCALLY OBSERVED/AUTOMODDED events and whatever we cached?
+      // Actually, standard usage of "Group Guard" implies it's running.
+      // Let's rely on "AutoModLog" for "Kicks/Bans" (Automod actions) and "LogEntry" for instance Activity.
+      
+      // REVISION: The DashboardView fetches `groups:get-audit-logs` which merges remote + local.
+      // For the CHART, we should probably do the same on the frontend OR fetch remote logs here and process?
+      // Doing it on frontend with the existing `auditStore` might be slow if we want 30 days history.
+      // 
+      // BETTER APPROACH FOR MVP: Query the `AutoModLog` table for "Automod Activity" (Blocks per day).
+      // For "Join Growth", that's harder without a synced database.
+      // Let's implement `getAutoModStats` first which we HAVE data for.
+      
+      // To get "Joins", we can query `LogEntry` for `PLAYER_JOIN` events in sessions associated with this group.
+      // This shows "Instance Traffic", which is a form of Growth/Activity.
+      
+      const cutoff = new Date();
+      cutoff.setDate(cutoff.getDate() - days);
+      
+      // 1. Instance Traffic (from local session logs)
+      // Group sessions only might be hard if `groupId` isn't always set, but we try.
+      const traffic = await this.getClient().logEntry.groupBy({
+          by: ['timestamp'], // Prisma SQLite doesn't support Date functions well in groupBy, might need raw query
+          where: {
+             type: { in: ['PLAYER_JOIN', 'JOIN'] },
+             timestamp: { gte: cutoff }
+          },
+      });
+      // SQLite truncating needed. Let's use raw query for date grouping.
+      
+      const trafficRaw = await this.getClient().$queryRaw`
+        SELECT 
+            strftime('%Y-%m-%d', timestamp) as date,
+            COUNT(*) as count
+        FROM LogEntry
+        WHERE type IN ('PLAYER_JOIN', 'JOIN')
+        AND sessionId IN (SELECT sessionId FROM Session WHERE groupId = ${groupId} OR groupId IS NULL) 
+        AND timestamp >= ${cutoff}
+        GROUP BY date
+      `;
+
+      // 2. AutoMod Activity (Kicks/Bans/Blocks)
+      const automodRaw = await this.getClient().$queryRaw`
+        SELECT 
+            strftime('%Y-%m-%d', timestamp) as date,
+            COUNT(*) as count,
+            action
+        FROM AutoModLog
+        WHERE groupId = ${groupId}
+        AND timestamp >= ${cutoff}
+        GROUP BY date, action
+      `;
+
+      return { traffic: trafficRaw, automod: automodRaw };
+  }
+
+  public async getActivityHeatmap(groupId: string) {
+      // Heatmap: DayOfWeek (0-6) vs Hour (0-23)
+      // Based on Session User Activity (LogEntry)
+      
+      const activityRaw = await this.getClient().$queryRaw`
+        SELECT 
+            strftime('%w', timestamp) as dayOfWeek,
+            strftime('%H', timestamp) as hour,
+            COUNT(*) as count
+        FROM LogEntry
+        WHERE type IN ('PLAYER_JOIN', 'JOIN')
+        AND sessionId IN (SELECT sessionId FROM Session WHERE groupId = ${groupId} OR groupId IS NULL)
+        GROUP BY dayOfWeek, hour
+      `;
+      
+      return activityRaw;
   }
 }
 

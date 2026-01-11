@@ -1,13 +1,5 @@
-/**
- * Pipeline Store - Manages WebSocket connection and real-time events from VRChat
- * 
- * This store handles:
- * - WebSocket connection lifecycle
- * - Real-time event distribution to other stores
- * - Connection status tracking
- */
-
 import { create } from 'zustand';
+import { getErrorMessage } from '../utils/errorUtils';
 import type { PipelineEvent, PipelineEventType } from '../types/electron';
 
 // ============================================
@@ -77,10 +69,9 @@ export const usePipelineStore = create<PipelineState>((set, get) => ({
         connecting: false 
       });
     } catch (err: unknown) {
-      const error = err as { message?: string };
       set({ 
         connecting: false, 
-        error: error.message || 'Failed to connect' 
+        error: getErrorMessage(err) || 'Failed to connect' 
       });
     }
   },

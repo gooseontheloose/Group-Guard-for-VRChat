@@ -340,6 +340,8 @@ export const OscAnnouncementWidget: React.FC = () => {
         let cancelled = false;
         window.electron.osc.getAnnouncementConfig(selectedGroup.id).then(cfg => {
             if (!cancelled) setConfig(cfg);
+        }).catch(err => {
+            console.error('Failed to load announcement config:', err);
         });
 
         return () => { cancelled = true; };

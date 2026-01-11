@@ -5,478 +5,15 @@ import { useAuditStore } from '../../stores/auditStore';
 import { useGroupStore } from '../../stores/groupStore';
 import { AnimatePresence, motion } from 'framer-motion';
 
+// Extracted components
+import { ModuleTab } from './components/ModuleTab';
+import { TagBadge } from './components/TagBadge';
+import { KeywordConfigModal } from './dialogs/KeywordConfigModal';
+import { getTrustColor, parseUserTags } from './utils/automodHelpers';
+
 // --- Types ---
 type AutoModModule = 'GATEKEEPER' | 'GROUP_SCANNER';
 
-// --- Local Components ---
-
-const ModuleTab: React.FC<{ 
-    active: boolean; 
-    label: string; 
-    icon: React.ReactNode; 
-    onClick: () => void 
-}> = ({ active, label, icon, onClick }) => (
-    <button
-        onClick={onClick}
-        style={{
-            position: 'relative',
-            background: 'transparent',
-            border: 'none',
-            padding: '12px 24px',
-            color: active ? 'white' : 'var(--color-text-dim)',
-            fontWeight: 800,
-            fontSize: '0.9rem',
-            letterSpacing: '0.05em',
-            cursor: 'pointer',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            transition: 'color 0.3s ease',
-            outline: 'none',
-            zIndex: 1
-        }}
-    >
-        <span style={{ fontSize: '1.2rem', opacity: active ? 1 : 0.7 }}>{icon}</span>
-        {label}
-        
-        {/* Active Indicator & Glow - "Sci-Fi Underline" */}
-        {active && (
-            <motion.div
-                layoutId="activeTab"
-                style={{
-                    position: 'absolute',
-                    bottom: 0,
-                    left: 0,
-                    right: 0,
-                    height: '2px',
-                    background: 'var(--color-primary)',
-                    boxShadow: '0 -2px 10px var(--color-primary)',
-                    borderRadius: '2px'
-                }}
-            />
-        )}
-        
-        {/* Subtle Background Highlight on Active */}
-        {active && (
-            <motion.div
-                layoutId="activeTabBg"
-                style={{
-                    position: 'absolute',
-                    inset: 0,
-                    background: 'linear-gradient(to top, rgba(var(--primary-hue), 100%, 50%, 0.1) 0%, transparent 100%)',
-                    borderRadius: '8px 8px 0 0',
-                    zIndex: -1
-                }}
-            />
-        )}
-    </button>
-);
-
-// --- Sub-Views (Placeholders) ---
-
-
-// --- Helper Components ---
-
-const ChipInput: React.FC<{
-    value: string[];
-    onChange: (newValue: string[]) => void;
-    placeholder?: string;
-    label: string;
-    color?: string;
-}> = ({ value, onChange, placeholder, label, color = 'var(--color-primary)' }) => {
-    const [input, setInput] = useState('');
-
-    const handleKeyDown = (e: React.KeyboardEvent) => {
-        if (e.key === 'Enter' || e.key === ',') {
-            e.preventDefault();
-            const trimmed = input.trim();
-            if (trimmed && !value.includes(trimmed)) {
-                onChange([...value, trimmed]);
-                setInput('');
-            }
-        } else if (e.key === 'Backspace' && !input && value.length > 0) {
-            onChange(value.slice(0, -1));
-        }
-    };
-
-    const removeChip = (chipToRemove: string) => {
-        onChange(value.filter(chip => chip !== chipToRemove));
-    };
-
-    return (
-        <div style={{ marginBottom: '1rem' }}>
-            <div style={{ fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--color-text-dim)', marginBottom: '0.5rem' }}>
-                {label}
-            </div>
-            <div style={{ 
-                display: 'flex', 
-                flexWrap: 'wrap', 
-                gap: '8px', 
-                padding: '8px', 
-                background: 'rgba(0,0,0,0.2)', 
-                border: '1px solid rgba(255,255,255,0.1)', 
-                borderRadius: '8px',
-                minHeight: '42px'
-            }}>
-                {value.map(chip => (
-                    <motion.div 
-                        layout
-                        key={chip}
-                        style={{ 
-                            background: color === 'red' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(74, 222, 128, 0.2)', 
-                            border: `1px solid ${color === 'red' ? '#ef4444' : '#4ade80'}`,
-                            color: color === 'red' ? '#fca5a5' : '#86efac',
-                            padding: '2px 8px', 
-                            borderRadius: '4px', 
-                            fontSize: '0.8rem',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '4px'
-                        }}
-                    >
-                        {chip}
-                        <span 
-                            onClick={() => removeChip(chip)} 
-                            style={{ cursor: 'pointer', opacity: 0.7, fontWeight: 'bold' }}
-                        >
-                            ×
-                        </span>
-                    </motion.div>
-                ))}
-                <input 
-                    type="text" 
-                    value={input}
-                    onChange={e => setInput(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder={value.length === 0 ? placeholder : ''}
-                    style={{ 
-                        background: 'transparent', 
-                        border: 'none', 
-                        color: 'white', 
-                        fontSize: '0.9rem', 
-                        flex: 1, 
-                        minWidth: '60px',
-                        outline: 'none'
-                    }}
-                />
-            </div>
-        </div>
-    );
-};
-
-
-// --- Modals ---
-
-const KeywordConfigModal: React.FC<{
-    isOpen: boolean;
-    onClose: () => void;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    config: any;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    onUpdate: (newConfig: any) => void;
-}> = ({ isOpen, onClose, config, onUpdate }) => {
-    return createPortal(
-        <AnimatePresence>
-            {isOpen && (
-                <>
-                    {/* Backdrop */}
-                    <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        onClick={onClose}
-                        style={{
-                            position: 'fixed',
-                            inset: 0,
-                            background: 'rgba(0,0,0,0.7)', // Darker backdrop
-                            backdropFilter: 'blur(4px)',
-                            zIndex: 9999, // High z-index
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            paddingBottom: '50px' // Lift slightly for dock awareness
-                        }}
-                    >
-                        {/* Modal Content */}
-                        <motion.div
-                            initial={{ scale: 0.95, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0.95, opacity: 0 }}
-                            onClick={e => e.stopPropagation()}
-                            style={{ 
-                                width: '90%', 
-                                maxWidth: '1000px', 
-                                maxHeight: '80vh', 
-                                zIndex: 101, 
-                                display: 'flex', 
-                                flexDirection: 'column',
-                                overflow: 'hidden', 
-                                borderRadius: '12px'
-                            }}
-                        >
-                            <GlassPanel style={{ 
-                                padding: '0', 
-                                border: '1px solid rgba(239, 68, 68, 0.3)', 
-                                boxShadow: '0 0 30px rgba(239, 68, 68, 0.1)', 
-                                display: 'flex', 
-                                flexDirection: 'column', 
-                                height: '100%', 
-                                maxHeight: '100%',
-                                minHeight: 0
-                            }}>
-                                {/* Header */}
-                                <div style={{ padding: '1.5rem 1.5rem 1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.05)', flexShrink: 0 }}>
-                                    <h2 style={{ margin: 0, fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                        <div style={{ padding: '8px', background: 'rgba(239, 68, 68, 0.1)', borderRadius: '50%', color: '#f87171' }}>
-                                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
-                                        </div>
-                                        Keyword Filter Configuration
-                                    </h2>
-                                    <button 
-                                        onClick={onClose}
-                                        style={{ background: 'none', border: 'none', color: 'var(--color-text-dim)', cursor: 'pointer', fontSize: '1.5rem', display: 'flex' }}
-                                    >
-                                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-                                    </button>
-                                </div>
-
-                                {/* 2-Column Grid Layout */}
-                                <div style={{ 
-                                    padding: '1.5rem', 
-                                    overflowY: 'auto', 
-                                    flex: '1 1 auto', 
-                                    minHeight: 0, 
-                                    display: 'grid', 
-                                    gridTemplateColumns: '1.4fr 1fr', 
-                                    gap: '2rem',
-                                    alignItems: 'start'
-                                }}>
-                                    
-                                    {/* Left Column: Input Lists */}
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
-                                        <div>
-                                            <ChipInput 
-                                                label="Blocked Keywords"
-                                                placeholder="Add word to ban..."
-                                                value={config.keywords || []}
-                                                color="red"
-                                                onChange={(newVal) => onUpdate({ ...config, keywords: newVal })}
-                                            />
-                                            <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.5)', marginTop: '-8px', paddingLeft: '4px' }}>
-                                                <span style={{ color: '#fca5a5' }}>Pro Tip:</span> To block an acronym (like "D.I.D") without banning the word "did", enter it with periods: <strong>d.i.d</strong>
-                                            </div>
-                                        </div>
-
-                                        <ChipInput 
-                                            label="Safelist (Exceptions)"
-                                            placeholder="Add allowed word..."
-                                            value={config.whitelist || []}
-                                            color="green"
-                                            onChange={(newVal) => onUpdate({ ...config, whitelist: newVal })}
-                                        />
-                                    </div>
-
-                                    {/* Right Column: Configuration & Strategy */}
-                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                                        
-                                        {/* Scanning Fields */}
-                                        <div style={{ padding: '1rem', background: 'rgba(0,0,0,0.2)', borderRadius: '8px' }}>
-                                            <div style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--color-text-dim)', marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Scanning Fields</div>
-                                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                                                {[
-                                                    { k: 'scanBio', l: 'Bio' }, 
-                                                    { k: 'scanStatus', l: 'Status' },
-                                                    { k: 'scanPronouns', l: 'Pronouns' }
-                                                ].map(opt => (
-                                                    <div 
-                                                        key={opt.k}
-                                                        onClick={() => onUpdate({ ...config, [opt.k]: !config[opt.k] })}
-                                                        style={{ 
-                                                            padding: '6px 12px', 
-                                                            borderRadius: '6px', 
-                                                            background: config[opt.k] ? 'rgba(74, 222, 128, 0.1)' : 'rgba(255,255,255,0.05)',
-                                                            border: config[opt.k] ? '1px solid #4ade80' : '1px solid rgba(255,255,255,0.1)',
-                                                            color: config[opt.k] ? 'white' : 'var(--color-text-dim)',
-                                                            fontSize: '0.8rem',
-                                                            cursor: 'pointer',
-                                                            display: 'flex', alignItems: 'center', gap: '8px',
-                                                            transition: 'all 0.2s'
-                                                        }}
-                                                    >
-                                                        <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: config[opt.k] ? '#4ade80' : 'rgba(255,255,255,0.2)' }} />
-                                                        {opt.l}
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
-
-                                        {/* Strategy */}
-                                        <div>
-                                            <div style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--color-text-dim)', marginBottom: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Matching Strategy</div>
-                                            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-dim)', marginBottom: '1rem', fontStyle: 'italic', background: 'rgba(255,255,255,0.05)', padding: '8px', borderRadius: '4px', display: 'flex' }}>
-                                                Example: Blocked <strong style={{ color: '#f87171', margin: '0 4px' }}>"bad"</strong> & <strong style={{ color: '#f87171', marginLeft: '4px' }}>"lol"</strong>
-                                            </div>
-
-                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                                                {/* Strict Card */}
-                                                <div 
-                                                    onClick={() => onUpdate({ ...config, matchMode: 'WHOLE_WORD' })}
-                                                    style={{ 
-                                                        padding: '1rem', 
-                                                        borderRadius: '8px', 
-                                                        background: config.matchMode !== 'PARTIAL' ? 'rgba(74, 222, 128, 0.1)' : 'rgba(255,255,255,0.02)',
-                                                        border: config.matchMode !== 'PARTIAL' ? '1px solid #4ade80' : '1px solid rgba(255,255,255,0.05)',
-                                                        cursor: 'pointer',
-                                                        transition: 'all 0.2s',
-                                                        opacity: config.matchMode !== 'PARTIAL' ? 1 : 0.6,
-                                                        display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '1rem', alignItems: 'center'
-                                                    }}
-                                                >
-                                                    <div>
-                                                        <div style={{ fontWeight: 'bold', color: config.matchMode !== 'PARTIAL' ? '#4ade80' : 'white', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                            <div style={{ width: '10px', height: '10px', borderRadius: '50%', border: '2px solid currentColor', background: config.matchMode !== 'PARTIAL' ? 'currentColor' : 'transparent' }}></div>
-                                                            Strict (Whole Word)
-                                                        </div>
-                                                        <div style={{ fontSize: '0.75rem', color: 'var(--color-text-dim)' }}>
-                                                            Smartly handles acronyms.
-                                                        </div>
-                                                    </div>
-                                                    
-                                                    <div style={{ background: 'rgba(0,0,0,0.3)', padding: '8px', borderRadius: '6px', fontSize: '0.7rem' }}>
-                                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                                                            <span style={{ color: '#d4d4d4' }}>"badger"</span>
-                                                            <span style={{ fontWeight: 'bold', color: '#4ade80' }}>✓ Safe</span>
-                                                        </div>
-                                                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                                            <span style={{ color: '#d4d4d4' }}>"l.o.l"</span>
-                                                            <span style={{ fontWeight: 'bold', color: '#f87171' }}>✖ Block</span>
-                                                        </div>
-                                                    </div>
-                                                </div>
-
-                                                {/* Loose Card */}
-                                                <div 
-                                                    onClick={() => onUpdate({ ...config, matchMode: 'PARTIAL' })}
-                                                    style={{ 
-                                                        padding: '1rem', 
-                                                        borderRadius: '8px', 
-                                                        background: config.matchMode === 'PARTIAL' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(255,255,255,0.02)',
-                                                        border: config.matchMode === 'PARTIAL' ? '1px solid #ef4444' : '1px solid rgba(255,255,255,0.05)',
-                                                        cursor: 'pointer',
-                                                        transition: 'all 0.2s',
-                                                        opacity: config.matchMode === 'PARTIAL' ? 1 : 0.6,
-                                                        display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '1rem', alignItems: 'center'
-                                                    }}
-                                                >
-                                                    <div>
-                                                        <div style={{ fontWeight: 'bold', color: config.matchMode === 'PARTIAL' ? '#f87171' : 'white', marginBottom: '4px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                                            <div style={{ width: '10px', height: '10px', borderRadius: '50%', border: '2px solid currentColor', background: config.matchMode === 'PARTIAL' ? 'currentColor' : 'transparent' }}></div>
-                                                            Loose (Partial)
-                                                        </div>
-                                                        <div style={{ fontSize: '0.75rem', color: 'var(--color-text-dim)' }}>
-                                                            Matches everywhere.
-                                                        </div>
-                                                    </div>
-
-                                                    <div style={{ background: 'rgba(0,0,0,0.3)', padding: '8px', borderRadius: '6px', fontSize: '0.7rem' }}>
-                                                        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '2px' }}>
-                                                            <span style={{ color: '#d4d4d4' }}>"badger"</span>
-                                                            <span style={{ fontWeight: 'bold', color: '#f87171' }}>✖ Block</span>
-                                                        </div>
-                                                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                                            <span style={{ color: '#d4d4d4' }}>"l.o.l"</span>
-                                                            <span style={{ fontWeight: 'bold', color: '#f87171' }}>✖ Block</span>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-
-                                {/* Sticky Footer */}
-                                <div style={{ padding: '1rem 1.5rem', borderTop: '1px solid rgba(255,255,255,0.05)', display: 'flex', justifyContent: 'flex-end', background: 'rgba(0,0,0,0.2)', flexShrink: 0 }}>
-                                    <button 
-                                        onClick={onClose}
-                                        style={{ 
-                                            padding: '10px 24px', 
-                                            background: '#f87171', 
-                                            color: 'black', 
-                                            border: 'none', 
-                                            borderRadius: '6px', 
-                                            fontWeight: 'bold', 
-                                            cursor: 'pointer',
-                                            boxShadow: '0 4px 12px rgba(248, 113, 113, 0.3)',
-                                            fontSize: '0.9rem'
-                                        }}
-                                    >
-                                        Done
-                                    </button>
-                                </div>
-                            </GlassPanel>
-                        </motion.div>
-                    </motion.div>
-                </>
-            )}
-        </AnimatePresence>,
-        document.body
-    );
-};
-
-
-// --- Helper: Tag Badge Component ---
-const TagBadge: React.FC<{ label: string; color?: string }> = ({ label, color = 'rgba(255,255,255,0.1)' }) => (
-    <span style={{
-        padding: '4px 10px',
-        background: color,
-        borderRadius: '4px',
-        fontSize: '0.7rem',
-        fontWeight: 600,
-        color: 'white',
-        textTransform: 'lowercase',
-        whiteSpace: 'nowrap'
-    }}>
-        {label}
-    </span>
-);
-
-// --- Helper: Get Trust Level Color ---
-const getTrustColor = (tags: string[]): string => {
-    if (tags?.some(t => t.includes('trusted'))) return '#a855f7'; // Purple
-    if (tags?.some(t => t.includes('known'))) return '#f97316'; // Orange
-    if (tags?.some(t => t.includes('user'))) return '#22c55e'; // Green
-    if (tags?.some(t => t.includes('new_user'))) return '#3b82f6'; // Blue
-    return '#6b7280'; // Gray
-};
-
-// --- Helper: Parse tags into readable labels ---
-const parseUserTags = (tags: string[]): { label: string; color: string }[] => {
-    if (!tags || !Array.isArray(tags)) return [];
-    
-    const result: { label: string; color: string }[] = [];
-    
-    // Trust levels
-    if (tags.some(t => t === 'system_trust_veteran')) result.push({ label: 'trust veteran', color: 'rgba(168, 85, 247, 0.3)' });
-    if (tags.some(t => t === 'system_trust_trusted')) result.push({ label: 'trust trusted', color: 'rgba(168, 85, 247, 0.3)' });
-    if (tags.some(t => t === 'system_trust_known')) result.push({ label: 'trust known', color: 'rgba(249, 115, 22, 0.3)' });
-    if (tags.some(t => t === 'system_trust_basic')) result.push({ label: 'trust basic', color: 'rgba(59, 130, 246, 0.3)' });
-    
-    // Special tags
-    if (tags.some(t => t === 'system_early_adopter')) result.push({ label: 'early adopter', color: 'rgba(236, 72, 153, 0.3)' });
-    if (tags.some(t => t === 'system_supporter')) result.push({ label: 'supporter', color: 'rgba(34, 197, 94, 0.3)' });
-    if (tags.some(t => t.includes('feedback_access'))) result.push({ label: 'feedback access', color: 'rgba(99, 102, 241, 0.3)' });
-    if (tags.some(t => t.includes('world_access'))) result.push({ label: 'world access', color: 'rgba(99, 102, 241, 0.3)' });
-    if (tags.some(t => t.includes('avatar_access'))) result.push({ label: 'avatar access', color: 'rgba(99, 102, 241, 0.3)' });
-    
-    // Language
-    const langTag = tags.find(t => t.startsWith('language_'));
-    if (langTag) {
-        const lang = langTag.replace('language_', '');
-        result.push({ label: `language ${lang}`, color: 'rgba(156, 163, 175, 0.3)' });
-    }
-    
-    return result;
-};
 
 // --- User Action Modal ---
 const UserActionModal: React.FC<{
@@ -573,13 +110,7 @@ const UserActionModal: React.FC<{
             }
         } catch (e) {
             console.error(`Failed to perform action: ${action}`, e);
-            console.log('Debug Context:', { 
-                action, 
-                groupId, 
-                logEntryUserId: logEntry?.userId,
-                logEntry,
-                selectedGroup 
-            });
+
             alert(`Action failed: ${e instanceof Error ? e.message : 'Unknown error'}\n\nCheck console for payload details.`);
         }
         setActionLoading(null);
@@ -589,7 +120,7 @@ const UserActionModal: React.FC<{
 
     const actionType = logEntry?.action || 'BLOCKED';
     const userTags = user?.tags ? parseUserTags(user.tags) : [];
-    const isAgeVerified = user?.ageVerified === true;
+    const isAgeVerified = user?.ageVerificationStatus === '18+';
     const hasVRCPlus = user?.tags?.some((t: string) => t.includes('supporter'));
     const trustColor = user?.tags ? getTrustColor(user.tags) : '#6b7280';
     
@@ -1059,6 +590,34 @@ const GatekeeperView = () => {
                                 Active sorting protocols for incoming group join requests. 
                                 Requests are pre-scanned before you even see them.
                             </p>
+                            <button 
+                                onClick={() => window.electron.automod.testNotification()}
+                                style={{
+                                    marginTop: '1rem',
+                                    padding: '8px 16px',
+                                    background: 'rgba(255,255,255,0.05)',
+                                    border: '1px solid rgba(255,255,255,0.1)',
+                                    borderRadius: '6px',
+                                    color: 'var(--color-text-dim)',
+                                    cursor: 'pointer',
+                                    fontSize: '0.8rem',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                    transition: 'all 0.2s'
+                                }}
+                                onMouseEnter={e => {
+                                    e.currentTarget.style.background = 'rgba(255,255,255,0.1)';
+                                    e.currentTarget.style.color = 'white';
+                                }}
+                                onMouseLeave={e => {
+                                    e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
+                                    e.currentTarget.style.color = 'var(--color-text-dim)';
+                                }}
+                            >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></svg>
+                                Test Notification
+                            </button>
                         </GlassPanel>
 
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '1rem' }}>
@@ -1107,55 +666,6 @@ const GatekeeperView = () => {
                                         {isAgeEnabled ? 'ACTIVE REJECTION' : 'DISABLED'}
                                     </div>
                                 </div>
-
-                                {/* Sub-Toggle: Auto Accept */}
-                                {isAgeEnabled && (
-                                    <motion.div 
-                                        initial={{ opacity: 0, height: 0 }}
-                                        animate={{ opacity: 1, height: 'auto' }}
-                                        style={{ marginTop: '1.5rem', width: '100%', paddingTop: '1rem', borderTop: '1px solid rgba(74, 222, 128, 0.2)' }}
-                                    >
-                                        <div 
-                                            onClick={(e) => {
-                                                e.stopPropagation();
-                                                const currentConfig = JSON.parse(ageRule?.config || '{}');
-                                                toggleRule('AGE_VERIFICATION', { ...currentConfig, autoAcceptVerified: !currentConfig.autoAcceptVerified });
-                                            }}
-                                            style={{ 
-                                                display: 'flex', 
-                                                alignItems: 'center', 
-                                                justifyContent: 'space-between', 
-                                                fontSize: '0.8rem', 
-                                                color: 'rgba(255,255,255,0.8)',
-                                                cursor: 'pointer',
-                                                padding: '4px 8px',
-                                                borderRadius: '4px',
-                                                background: 'rgba(0,0,0,0.2)'
-                                            }}
-                                        >
-                                            <span>Auto-Accept Verified</span>
-                                            <div style={{
-                                                width: '32px',
-                                                height: '18px',
-                                                background: JSON.parse(ageRule?.config || '{}').autoAcceptVerified ? '#4ade80' : 'rgba(255,255,255,0.2)',
-                                                borderRadius: '10px',
-                                                position: 'relative',
-                                                transition: 'background 0.2s'
-                                            }}>
-                                                <div style={{
-                                                    width: '14px',
-                                                    height: '14px',
-                                                    background: 'white',
-                                                    borderRadius: '50%',
-                                                    position: 'absolute',
-                                                    top: '2px',
-                                                    left: JSON.parse(ageRule?.config || '{}').autoAcceptVerified ? '16px' : '2px',
-                                                    transition: 'left 0.2s'
-                                                }} />
-                                            </div>
-                                        </div>
-                                    </motion.div>
-                                )}
                             </motion.div>
 
                             {/* Keyword Filter Rule Card */}
@@ -1603,7 +1113,7 @@ export const AutoModView: React.FC = () => {
     const [activeModule, setActiveModule] = useState<AutoModModule>('GATEKEEPER');
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '1rem', paddingBottom: '20px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '1rem', paddingBottom: 'var(--dock-height)' }}>
             
             {/* Top Navigation Bar */}
             <div style={{ flex: '0 0 auto', display: 'flex', justifyContent: 'center' }}>

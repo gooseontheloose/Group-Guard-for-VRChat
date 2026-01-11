@@ -8,6 +8,8 @@ interface ThemeState {
   setAccentHue: (hue: number) => void;
   glassBlur: number;
   setGlassBlur: (px: number) => void;
+  uiScale: number;
+  setUiScale: (scale: number) => void;
   resetTheme: () => void;
 }
 
@@ -18,6 +20,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [primaryHue, setPrimaryHue] = useState<number>(() => parseInt(localStorage.getItem('primaryHue') || '270'));
   const [accentHue, setAccentHue] = useState<number>(() => parseInt(localStorage.getItem('accentHue') || '180'));
   const [glassBlur, setGlassBlur] = useState<number>(() => parseInt(localStorage.getItem('glassBlur') || '20'));
+  const [uiScale, setUiScale] = useState<number>(() => parseFloat(localStorage.getItem('uiScale') || '1'));
 
   // Sync state to CSS Variables
   useEffect(() => {
@@ -38,10 +41,17 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     localStorage.setItem('glassBlur', glassBlur.toString());
   }, [glassBlur]);
 
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty('--ui-scale', uiScale.toString());
+    localStorage.setItem('uiScale', uiScale.toString());
+  }, [uiScale]);
+
   const resetTheme = () => {
     setPrimaryHue(270);
     setAccentHue(180);
     setGlassBlur(20);
+    setUiScale(1);
   };
 
   return (
@@ -49,6 +59,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       primaryHue, setPrimaryHue, 
       accentHue, setAccentHue,
       glassBlur, setGlassBlur,
+      uiScale, setUiScale,
       resetTheme 
     }}>
       {children}
@@ -56,6 +67,7 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   );
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useTheme = () => {
   const context = useContext(ThemeContext);
   if (!context) {
@@ -63,3 +75,4 @@ export const useTheme = () => {
   }
   return context;
 };
+

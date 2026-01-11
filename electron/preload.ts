@@ -28,6 +28,7 @@ import { contextBridge, ipcRenderer } from 'electron';
      getGroupInstances: (groupId: string) => ipcRenderer.invoke('groups:get-instances', { groupId }),
 
      banUser: (groupId: string, userId: string) => ipcRenderer.invoke('groups:ban-user', { groupId, userId }),
+     unbanUser: (groupId: string, userId: string) => ipcRenderer.invoke('groups:unban-user', { groupId, userId }),
      
      // Role Management
      getGroupRoles: (groupId: string) => ipcRenderer.invoke('groups:get-roles', { groupId }),
@@ -124,6 +125,15 @@ import { contextBridge, ipcRenderer } from 'electron';
          setPath: (path: string) => ipcRenderer.invoke('storage:set-path', path),
      },
 
+     // UI Layout Store (for dashboard layout persistence)
+     uiLayout: {
+         get: (key: string) => ipcRenderer.invoke('ui-layout:get', key),
+         set: (key: string, value: unknown) => ipcRenderer.invoke('ui-layout:set', key, value),
+         delete: (key: string) => ipcRenderer.invoke('ui-layout:delete', key),
+         has: (key: string) => ipcRenderer.invoke('ui-layout:has', key),
+     },
+
+
      // Instance Presence API
      instance: {
          getCurrentGroup: () => ipcRenderer.invoke('instance:get-current-group'),
@@ -133,13 +143,14 @@ import { contextBridge, ipcRenderer } from 'electron';
              return () => ipcRenderer.removeListener('instance:group-changed', handler);
          },
          // NEW LIVE OPS API
-         scanSector: (groupId: string) => ipcRenderer.invoke('instance:scan-sector', { groupId }),
-         recruitUser: (groupId: string, userId: string) => ipcRenderer.invoke('instance:recruit-user', { groupId, userId }),
+         scanSector: (groupId?: string) => ipcRenderer.invoke('instance:scan-sector', { groupId }),
+         recruitUser: (groupId: string, userId: string, message?: string) => ipcRenderer.invoke('instance:recruit-user', { groupId, userId, message }),
          unbanUser: (groupId: string, userId: string) => ipcRenderer.invoke('instance:unban-user', { groupId, userId }),
          kickUser: (groupId: string, userId: string) => ipcRenderer.invoke('instance:kick-user', { groupId, userId }),
          // rallyForces: (groupId: string) => ipcRenderer.invoke('instance:rally-forces', { groupId }), // Deprecated but keeping for safety if needed
          getRallyTargets: (groupId: string) => ipcRenderer.invoke('instance:get-rally-targets', { groupId }),
-         inviteToCurrent: (userId: string) => ipcRenderer.invoke('instance:invite-to-current', { userId }),
+         inviteToCurrent: (userId: string, message?: string) => ipcRenderer.invoke('instance:invite-to-current', { userId, message }),
+         rallyFromSession: (filename: string, message?: string) => ipcRenderer.invoke('instance:rally-from-session', { filename, message }),
          inviteSelf: (worldId: string, instanceId: string) => ipcRenderer.invoke('instance:invite-self', { worldId, instanceId }),
          closeInstance: (worldId?: string, instanceId?: string) => ipcRenderer.invoke('instance:close-instance', { worldId, instanceId }),
          getInstanceInfo: () => ipcRenderer.invoke('instance:get-instance-info'),
@@ -180,6 +191,12 @@ import { contextBridge, ipcRenderer } from 'electron';
          checkUser: (user: unknown) => ipcRenderer.invoke('automod:check-user', user),
          getHistory: () => ipcRenderer.invoke('automod:get-history'),
          clearHistory: () => ipcRenderer.invoke('automod:clear-history'),
+         onViolation: (callback: (data: { displayName: string; userId: string; action: string; reason: string }) => void) => {
+             const handler = (_event: Electron.IpcRendererEvent, data: { displayName: string; userId: string; action: string; reason: string }) => callback(data);
+             ipcRenderer.on('automod:violation', handler);
+             return () => ipcRenderer.removeListener('automod:violation', handler);
+         },
+         testNotification: () => ipcRenderer.invoke('automod:test-notification'),
      },
 
      // OSC API
@@ -192,6 +209,29 @@ import { contextBridge, ipcRenderer } from 'electron';
          getAnnouncementConfig: (groupId: string) => ipcRenderer.invoke('osc:get-announcement-config', groupId),
          // eslint-disable-next-line @typescript-eslint/no-explicit-any
          setAnnouncementConfig: (groupId: string, config: any) => ipcRenderer.invoke('osc:set-announcement-config', { groupId, config })
+     },
+
+     // Discord RPC API
+     discordRpc: {
+         getConfig: () => ipcRenderer.invoke('discord-rpc:get-config'),
+         setConfig: (config: { enabled: boolean; showGroupName: boolean; showMemberCount: boolean; showElapsedTime: boolean; customDetails: string; customState: string }) => 
+             ipcRenderer.invoke('discord-rpc:set-config', config),
+         getStatus: () => ipcRenderer.invoke('discord-rpc:get-status'),
+         reconnect: () => ipcRenderer.invoke('discord-rpc:reconnect'),
+         disconnect: () => ipcRenderer.invoke('discord-rpc:disconnect'),
+     },
+
+     // Analytics API
+     stats: {
+         getActivity: (groupId: string, days = 30) => ipcRenderer.invoke('stats:get-activity', { groupId, days }),
+         getHeatmap: (groupId: string) => ipcRenderer.invoke('stats:get-heatmap', { groupId }),
+     },
+
+     // Discord Webhook API
+     webhook: {
+         getUrl: (groupId: string) => ipcRenderer.invoke('webhook:get-url', { groupId }),
+         setUrl: (groupId: string, url: string) => ipcRenderer.invoke('webhook:set-url', { groupId, url }),
+         test: (groupId: string) => ipcRenderer.invoke('webhook:test', { groupId }),
      },
 
      // Generic IPC Renderer for event listening

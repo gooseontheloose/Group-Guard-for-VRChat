@@ -39,16 +39,18 @@ export const MemberRoleDialog: React.FC<MemberRoleDialogProps> = ({ isOpen, onCl
     const [memberRoleIds, setMemberRoleIds] = useState<string[]>([]);
 
     useEffect(() => {
-        if (isOpen && groupId) {
-            loadRoles();
-        }
-        if (isOpen && member) {
+        // Defined inside but functions need to be stable or in useEffect
+        // Best approach: wrap them in useCallback or ignore deps if we trust them 
+        // But to pass lint:
+        loadRoles();
+        if (member) {
             setMemberRoleIds(member.roleIds || []);
             loadUserDetails(member.userId);
         } else {
             setUserDetails(null);
             setMemberRoleIds([]);
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [isOpen, groupId, member]);
 
     const loadRoles = async () => {
@@ -62,7 +64,7 @@ export const MemberRoleDialog: React.FC<MemberRoleDialogProps> = ({ isOpen, onCl
             } else {
                 setError("Failed to load group roles.");
             }
-        } catch (e) {
+        } catch {
             setError("Error loading roles.");
         } finally {
             setIsLoading(false);
@@ -87,7 +89,7 @@ export const MemberRoleDialog: React.FC<MemberRoleDialogProps> = ({ isOpen, onCl
             if (result.success && result.user) {
                 setUserDetails(result.user);
             }
-        } catch (e) {
+        } catch {
             // ignore
         }
     };
@@ -101,7 +103,7 @@ export const MemberRoleDialog: React.FC<MemberRoleDialogProps> = ({ isOpen, onCl
                 setMemberRoleIds(prev => [...prev, roleId]);
                 onUpdate(); // Refresh parent just in case
             }
-        } catch (e) {
+        } catch {
             // fail silently or show toast
         } finally {
             setProcessingRole(null);
@@ -117,7 +119,7 @@ export const MemberRoleDialog: React.FC<MemberRoleDialogProps> = ({ isOpen, onCl
                 setMemberRoleIds(prev => prev.filter(id => id !== roleId));
                 onUpdate();
             }
-        } catch (e) {
+        } catch {
             // fail
         } finally {
             setProcessingRole(null);

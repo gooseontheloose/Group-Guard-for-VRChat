@@ -12,6 +12,7 @@ export const UserProfileDialog: React.FC = () => {
 
     useEffect(() => {
         if (isOpen && userId) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect
             setLoading(true);
             setError(null);
             setUser(null);
@@ -77,7 +78,7 @@ export const UserProfileDialog: React.FC = () => {
                             />
                             <div style={{ position: 'absolute', bottom: '-10px', right: '-10px', display: 'flex', alignItems: 'center', gap: '5px' }}>
                                 {/* Age Verified Badge */}
-                                {(user.ageVerified || user.tags?.includes('system_age_verified')) && (
+                                {user.ageVerificationStatus === '18+' && (
                                     <div style={{
                                         background: '#fbbf24', // Amber/Gold
                                         color: '#000',

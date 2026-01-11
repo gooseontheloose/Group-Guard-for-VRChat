@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-interface AuditLogEntry {
+export interface AuditLogEntry {
   id: string;
   created_at: string;
   type: string;

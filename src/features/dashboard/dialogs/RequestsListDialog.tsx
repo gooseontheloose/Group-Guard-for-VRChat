@@ -45,7 +45,7 @@ export const RequestsListDialog: React.FC<Props> = ({ isOpen, onClose }) => {
                                 <div>
                                     <div style={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px' }}>
                                         {req.user.displayName}
-                                        {(req.user.ageVerified || req.user.tags?.includes('system_age_verified')) && (
+                                        {req.user.ageVerificationStatus === '18+' && (
                                             <span style={{ 
                                                 background: '#fbbf24', 
                                                 color: 'black', 

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { getErrorMessage } from '../utils/errorUtils';
 import type { GroupRequest, GroupBan, GroupMember, VRChatInstance, PipelineEvent } from '../types/electron';
 
 interface Group {
@@ -109,8 +110,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
         set({ error: result.error || 'Failed to fetch groups', isLoading: false });
       }
     } catch (err: unknown) {
-      const error = err as { message?: string };
-      set({ error: error.message || 'Failed to fetch groups', isLoading: false });
+      set({ error: getErrorMessage(err) || 'Failed to fetch groups', isLoading: false });
     }
   },
 

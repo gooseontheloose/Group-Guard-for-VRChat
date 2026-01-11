@@ -4,115 +4,104 @@ const logger = log.scope('GroupService');
 import { getVRChatClient, getCurrentUserId, getAuthCookieString } from './AuthService';
 import { databaseService } from './DatabaseService';
 import { groupAuthorizationService } from './GroupAuthorizationService';
+import { networkService } from './NetworkService';
+import { discordWebhookService } from './DiscordWebhookService';
 
 export function setupGroupHandlers() {
 
   // Get user's groups (groups where user is a member)
+  // Get user's groups (groups where user is a member)
   ipcMain.handle('groups:get-my-groups', async () => {
-    try {
       const client = getVRChatClient();
       const userId = getCurrentUserId();
       
-      logger.debug('groups:get-my-groups called', { hasClient: !!client, userId });
-      
       if (!client || !userId) {
-        logger.warn('Auth check failed in GroupService');
-        throw new Error("Not authenticated. Please log in first.");
+        return { success: false, error: "Not authenticated. Please log in first." };
       }
 
-      logger.info(`Fetching user groups for user ID: "${userId}" (type: ${typeof userId})`);
-      
-      // Sanitize userId
-      const safeUserId = userId.trim();
-      if (!safeUserId.startsWith('usr_')) {
-          logger.error(`Invalid User ID format: ${safeUserId}`);
-          throw new Error(`Invalid User ID: ${safeUserId}`);
-      }
-      
-      // Reverting to Object Syntax as positional caused "malformed url"
-      const response = await client.getUserGroups({ 
-        path: { userId: safeUserId },
-        query: { n: 100, offset: 0 }
+      return networkService.execute(async () => {
+          // Sanitize userId
+          const safeUserId = userId.trim();
+          if (!safeUserId.startsWith('usr_')) {
+              throw new Error(`Invalid User ID: ${safeUserId}`);
+          }
+          
+          const response = await client.getUserGroups({ 
+            path: { userId: safeUserId },
+            query: { n: 100, offset: 0 }
+          });
+
+          if (response.error) {
+             throw (response.error as { message?: string }).message || 'Failed to fetch groups';
+          }
+
+          const groups = response.data || [];
+          
+          // Filter for groups where user has moderation powers
+          interface GroupMembershipData {
+            id: string;
+            groupId?: string;
+            ownerId?: string;
+            myMember?: { permissions?: string[] };
+            [key: string]: unknown;
+          }
+          const moderatableGroups = (groups as GroupMembershipData[]).filter((g) => {
+            const isOwner = g.ownerId === safeUserId;
+            const hasPermissions = g.myMember?.permissions && Array.isArray(g.myMember.permissions) && g.myMember.permissions.length > 0;
+            return isOwner || hasPermissions;
+          });
+
+          // map the groups to ensure 'id' is the Group ID (grp_), not the Member ID (gmem_)
+          const mappedGroups = moderatableGroups.map((g) => {
+            if (g.groupId && typeof g.groupId === 'string' && g.groupId.startsWith('grp_')) {
+                return {
+                    ...g,
+                    id: g.groupId,      // helper for frontend
+                    _memberId: g.id     // preserve original membership ID
+                };
+            }
+            return g;
+          });
+
+          logger.info(`fetched ${mappedGroups.length} moderatable groups`);
+          
+          // SIDE EFFECTS (Updating other services)
+          // We wrap this in a non-blocking way or try/catch so it doesn't fail the main request
+          try {
+              // eslint-disable-next-line @typescript-eslint/no-require-imports
+              const { instanceLoggerService } = require('./InstanceLoggerService');
+              instanceLoggerService.setAllowedGroups(mappedGroups.map(g => g.id));
+              
+              // Trigger AutoMod
+              import('./AutoModService').then(({ processAllPendingRequests }) => {
+                  processAllPendingRequests().catch(err => logger.error('AutoMod trigger failed', err));
+              });
+          } catch (e) {
+              logger.error('Failed to update side-effects', e);
+          }
+
+          return { groups: mappedGroups }; // Return object suitable for data in ExecutionResult
+      }, 'groups:get-my-groups').then(res => {
+          // Map ExecutionResult to IPC format if needed, or simply return specific shape
+          if (res.success) return { success: true, groups: res.data?.groups };
+          return { success: false, error: res.error };
       });
-
-      if (response.error) {
-        logger.error('getUserGroups returned error:', response.error);
-        throw new Error((response.error as { message?: string }).message || 'Failed to fetch groups');
-      }
-
-      const groups = response.data || [];
-      
-      // Filter for groups where user has moderation powers
-      interface GroupMembershipData {
-        id: string;
-        groupId?: string;
-        ownerId?: string;
-        myMember?: { permissions?: string[] };
-        [key: string]: unknown;
-      }
-      const moderatableGroups = (groups as GroupMembershipData[]).filter((g) => {
-        const isOwner = g.ownerId === safeUserId;
-        const hasPermissions = g.myMember?.permissions && Array.isArray(g.myMember.permissions) && g.myMember.permissions.length > 0;
-        return isOwner || hasPermissions;
-      });
-
-      // map the groups to ensure 'id' is the Group ID (grp_), not the Member ID (gmem_)
-      const mappedGroups = moderatableGroups.map((g) => {
-        // VRChat API getUserGroups returns membership objects.
-        // g.id is the Membership ID (gmem_...)
-        // g.groupId is the actual Group ID (grp_...)
-        // We want the frontend to see 'id' as the Group ID.
-        if (g.groupId && typeof g.groupId === 'string' && g.groupId.startsWith('grp_')) {
-            return {
-                ...g,
-                id: g.groupId,      // helper for frontend
-                _memberId: g.id     // preserve original membership ID
-            };
-        }
-        return g;
-      });
-
-      logger.info(`Fetched ${groups.length} total groups. Filtered to ${mappedGroups.length} moderatable groups.`);
-      
-      // Update InstanceLoggerService with allowed groups
-      try {
-          // eslint-disable-next-line @typescript-eslint/no-require-imports
-          const { instanceLoggerService } = require('./InstanceLoggerService');
-          instanceLoggerService.setAllowedGroups(mappedGroups.map(g => g.id));
-      } catch (e) {
-          logger.error('Failed to update instance logger allowed groups', e);
-      }
-
-      return { success: true, groups: mappedGroups };
-
-    } catch (error: unknown) {
-      const err = error as { message?: string; response?: { status?: number }; stack?: string; config?: unknown };
-      logger.error('Failed to fetch groups:', { message: err.message, stack: err.stack });
-      if (err.response?.status === 401) return { success: false, error: 'Session expired. Please log in again.' };
-      return { success: false, error: err.message || 'Failed to fetch groups' };
-    }
   });
 
   // Get specific group details
+  // Get specific group details
   ipcMain.handle('groups:get-details', async (_event, { groupId }: { groupId: string }) => {
-    try {
-      // SECURITY: Validate group access
       groupAuthorizationService.validateAccess(groupId, 'groups:get-details');
       
-      const client = getVRChatClient();
-      if (!client) throw new Error("Not authenticated");
-  
-      // Revert to Object Syntax
-      const response = await client.getGroup({ path: { groupId } });
-      
-      if (response.error) throw response.error;
-      return { success: true, group: response.data };
-      
-    } catch (error: unknown) {
-      const err = error as { message?: string };
-      logger.error('Failed to fetch group details:', error);
-      return { success: false, error: err.message || 'Failed to fetch group' };
-    }
+      return networkService.execute(async () => {
+          const client = getVRChatClient();
+          if (!client) throw new Error("Not authenticated");
+          const response = await client.getGroup({ path: { groupId } });
+          return { group: response.data }; 
+      }, `groups:get-details:${groupId}`).then(res => {
+          if (res.success) return { success: true, group: res.data?.group };
+          return { success: false, error: res.error };
+      });
   });
 
   // Get world details
@@ -136,27 +125,22 @@ export function setupGroupHandlers() {
 
   // Get group members
   ipcMain.handle('groups:get-members', async (_event, { groupId, n = 100, offset = 0 }: { groupId: string; n?: number; offset?: number }) => {
-    try {
       // SECURITY: Validate group access
       groupAuthorizationService.validateAccess(groupId, 'groups:get-members');
-      
-      const client = getVRChatClient();
-      if (!client) throw new Error("Not authenticated");
-  
-      // Revert to Object Syntax
-      const response = await client.getGroupMembers({ 
-        path: { groupId },
-        query: { n, offset }
+
+      return networkService.execute(async () => {
+          const client = getVRChatClient();
+          if (!client) throw new Error("Not authenticated");
+          
+          const response = await client.getGroupMembers({ 
+            path: { groupId },
+            query: { n, offset }
+          });
+          return { members: response.data ?? [] };
+      }, `groups:get-members:${groupId}`).then(res => {
+          if (res.success) return { success: true, members: res.data?.members };
+          return { success: false, error: res.error };
       });
-      
-      if (response.error) throw response.error;
-      return { success: true, members: response.data ?? [] };
-      
-    } catch (error: unknown) {
-      const err = error as { message?: string };
-      logger.error('Failed to fetch group members:', error);
-      return { success: false, error: err.message || 'Failed to fetch members' };
-    }
   });
 
   // Helper to extract array from VRChat API response
@@ -170,84 +154,65 @@ export function setupGroupHandlers() {
   };
 
   // Search group members (fetches members and filters client-side)
-  // Note: VRChat API may not support server-side search on getGroupMembers
   ipcMain.handle('groups:search-members', async (_event, { groupId, query, n = 15 }: { groupId: string; query: string; n?: number }) => {
-    try {
       // SECURITY: Validate group access
       groupAuthorizationService.validateAccess(groupId, 'groups:search-members');
       
-      const client = getVRChatClient();
-      if (!client) throw new Error("Not authenticated");
-      
-      const searchQuery = query.toLowerCase().trim();
-      logger.info(`Searching members in group ${groupId} for "${searchQuery}"`);
-      
-      // Fetch a larger batch of members to search through
-      // We'll paginate through multiple pages to find matches
-      const allMembers: unknown[] = [];
-      const batchSize = 100;
-      const maxBatches = 5; // Up to 500 members
-      
-      for (let batch = 0; batch < maxBatches; batch++) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const response = await (client as any).getGroupMembers({ 
-          path: { groupId },
-          query: { 
-            n: batchSize, 
-            offset: batch * batchSize
+      return networkService.execute(async () => {
+          const client = getVRChatClient();
+          if (!client) throw new Error("Not authenticated");
+          
+          const searchQuery = query.toLowerCase().trim();
+          logger.info(`Searching members in group ${groupId} for "${searchQuery}"`);
+          
+          // Fetch a larger batch of members to search through
+          const allMembers: unknown[] = [];
+          const batchSize = 100;
+          const maxBatches = 5; // Up to 500 members
+          
+          for (let batch = 0; batch < maxBatches; batch++) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const response = await (client as any).getGroupMembers({ 
+              path: { groupId },
+              query: { n: batchSize, offset: batch * batchSize }
+            });
+            
+            if (response.error) throw response.error;
+            
+            const members = response.data ?? [];
+            if (members.length === 0) break; // No more members
+            allMembers.push(...members);
+            
+            interface MemberData {
+              user?: { displayName?: string; username?: string; };
+            }
+            const matches = allMembers.filter((m: unknown) => {
+              const member = m as MemberData;
+              const displayName = member.user?.displayName?.toLowerCase() || '';
+              const username = member.user?.username?.toLowerCase() || '';
+              return displayName.includes(searchQuery) || username.includes(searchQuery);
+            });
+            
+            if (matches.length >= n) break;
+            if (members.length < batchSize) break;
           }
-        });
-        
-        if (response.error) throw response.error;
-        
-        const members = response.data ?? [];
-        if (members.length === 0) break; // No more members
-        
-        allMembers.push(...members);
-        
-        // Stop if we've found enough matches
-        interface MemberData {
-          user?: {
-            displayName?: string;
-            username?: string;
-          };
-        }
-        const matches = allMembers.filter((m: unknown) => {
-          const member = m as MemberData;
-          const displayName = member.user?.displayName?.toLowerCase() || '';
-          const username = member.user?.username?.toLowerCase() || '';
-          return displayName.includes(searchQuery) || username.includes(searchQuery);
-        });
-        
-        if (matches.length >= n) break;
-        
-        // Don't fetch more if we got less than a full batch (end of list)
-        if (members.length < batchSize) break;
-      }
-      
-      // Filter and limit results
-      interface MemberData {
-        user?: {
-          displayName?: string;
-          username?: string;
-        };
-      }
-      const filteredMembers = allMembers.filter((m: unknown) => {
-        const member = m as MemberData;
-        const displayName = member.user?.displayName?.toLowerCase() || '';
-        const username = member.user?.username?.toLowerCase() || '';
-        return displayName.includes(searchQuery) || username.includes(searchQuery);
-      }).slice(0, n);
-      
-      logger.info(`Found ${filteredMembers.length} members matching "${searchQuery}" (searched ${allMembers.length} total)`);
-      
-      return { success: true, members: filteredMembers };
-      
-    } catch (error: unknown) {
-      const err = error as { message?: string };
-      logger.error('Failed to search group members:', error);
-      return { success: false, error: err.message || 'Failed to search members' };
-    }
+          
+          // Filter and limit results
+          interface MemberData {
+            user?: { displayName?: string; username?: string; };
+          }
+          const filteredMembers = allMembers.filter((m: unknown) => {
+            const member = m as MemberData;
+            const displayName = member.user?.displayName?.toLowerCase() || '';
+            const username = member.user?.username?.toLowerCase() || '';
+            return displayName.includes(searchQuery) || username.includes(searchQuery);
+          }).slice(0, n);
+          
+          return { members: filteredMembers };
+      }, `groups:search-members:${groupId}`).then(res => {
+          if (res.success) return { success: true, members: res.data?.members };
+          return { success: false, error: res.error };
+      });
   });
 
   // Get group join requests
@@ -333,7 +298,18 @@ export function setupGroupHandlers() {
               query: { n: 100, offset: 0 }
           });
           if (!response.error) {
-              setLogs = extractArray(response.data);
+              const rawLogs = extractArray(response.data);
+              setLogs = rawLogs.map((l: any) => ({
+                  ...l,
+                  type: l.eventType || 'unknown', // Map eventType to type
+                  eventType: l.eventType,
+                  // Ensure other fields are present/flat
+                  actorId: l.actorId || l.actor?.id,
+                  actorDisplayName: l.actorDisplayName || l.actor?.displayName,
+                  targetId: l.targetId || l.target?.id,
+                  targetDisplayName: l.targetDisplayName || l.target?.displayName,
+                  created_at: l.created_at || l.createdAt
+              }));
           }
       } catch (e) {
           logger.warn('Failed to fetch remote audit logs', e);
@@ -395,6 +371,7 @@ export function setupGroupHandlers() {
   });
 
   // Get active group instances - using direct HTTP to bypass SDK quirks
+  // Get active group instances - using direct HTTP to bypass SDK quirks
   ipcMain.handle('groups:get-instances', async (_event, { groupId }: { groupId: string }) => {
     // SECURITY: Validate group access first
     const authCheck = groupAuthorizationService.validateAccessSafe(groupId, 'groups:get-instances');
@@ -402,147 +379,73 @@ export function setupGroupHandlers() {
       return { success: false, error: authCheck.error };
     }
     
-    // Helper to safely stringify objects with BigInt values
-    const safeStringify = (obj: unknown): string => {
-      try {
-        return JSON.stringify(obj, (_key, value) => 
-          typeof value === 'bigint' ? value.toString() : value
-        );
-      } catch {
-        return String(obj);
-      }
-    };
+    const client = getVRChatClient();
+    if (!client) return { success: false, error: "Not authenticated" };
+    const userId = getCurrentUserId();
+    if (!userId) return { success: false, error: "No user ID" };
 
-    try {
-      const client = getVRChatClient();
-      if (!client) throw new Error("Not authenticated");
-      
-      const userId = getCurrentUserId();
-      if (!userId) throw new Error("No user ID found");
-
-      logger.info(`[INSTANCES] Fetching for group: ${groupId}, user: ${userId}`);
-
-      // Strategy 1: Try the SDK method getUserGroupInstancesForGroup
-      let instances: unknown[] = [];
-      
-      try {
-        const clientAny = client as Record<string, unknown>;
-        if (typeof clientAny.getUserGroupInstancesForGroup === 'function') {
-          logger.info('[INSTANCES] Trying SDK method: getUserGroupInstancesForGroup');
-          const response = await (clientAny.getUserGroupInstancesForGroup as CallableFunction)({ 
-            path: { userId, groupId } 
-          });
-          const data = (response as { data?: unknown })?.data ?? response;
-          logger.info('[INSTANCES] SDK Response:', safeStringify(data));
-          instances = extractArray(data);
-        } else {
-          logger.warn('[INSTANCES] SDK method getUserGroupInstancesForGroup not available');
-        }
-      } catch (e: unknown) {
-        const err = e as { message?: string };
-        logger.warn('[INSTANCES] SDK getUserGroupInstancesForGroup failed:', err.message);
-      }
-
-      // Strategy 2: Try getUserGroupInstances (all groups) and filter
-      if (instances.length === 0) {
-        try {
-          const clientAny = client as Record<string, unknown>;
-          if (typeof clientAny.getUserGroupInstances === 'function') {
-            logger.info('[INSTANCES] Trying SDK method: getUserGroupInstances (all groups)');
-            const response = await (clientAny.getUserGroupInstances as CallableFunction)({ 
-              path: { userId } 
-            });
-            const data = (response as { data?: unknown })?.data ?? response;
-            const allInstances = extractArray(data);
-            logger.info(`[INSTANCES] getUserGroupInstances returned ${allInstances.length} total instances`);
-            
-            // SECURITY: Filter out any instances belonging to unauthorized groups
-            // This protects against the API returning data for groups we are in but don't manage
-            const authorizedInstances = groupAuthorizationService.filterAuthorizedData(allInstances, (inst: unknown) => {
+    // Define Strategies
+    const strategies = [
+        // Strategy 1: SDK getUserGroupInstancesForGroup
+        async () => {
+            const clientAny = client as Record<string, unknown>;
+            if (typeof clientAny.getUserGroupInstancesForGroup === 'function') {
+                const response = await (clientAny.getUserGroupInstancesForGroup as CallableFunction)({ path: { userId, groupId } });
+                const data = (response as { data?: unknown })?.data ?? response;
+                return extractArray(data);
+            }
+            throw new Error('SDK method generic failure');
+        },
+        // Strategy 2: SDK getUserGroupInstances (all) + Filter
+        async () => {
+             const clientAny = client as Record<string, unknown>;
+             if (typeof clientAny.getUserGroupInstances !== 'function') throw new Error('SDK method missing');
+             
+             const response = await (clientAny.getUserGroupInstances as CallableFunction)({ path: { userId } });
+             const data = (response as { data?: unknown })?.data ?? response;
+             const allInstances = extractArray(data);
+             
+             // Security Filter
+             const authorizedInstances = groupAuthorizationService.filterAuthorizedData(allInstances, (inst: unknown) => {
                 const i = inst as Record<string, unknown>;
-                // Try to find the group ID this instance belongs to
                 if (typeof i.groupId === 'string') return i.groupId;
                 if (i.group && typeof (i.group as Record<string, unknown>).id === 'string') return (i.group as Record<string, unknown>).id as string;
-                // ownerId format for group instances is usually "grp_..."
                 if (typeof i.ownerId === 'string' && i.ownerId.startsWith('grp_')) return i.ownerId;
                 return undefined;
             });
 
-            if (authorizedInstances.length > 0) {
-              logger.info('[INSTANCES] First instance keys:', Object.keys(authorizedInstances[0] as object));
-              logger.info('[INSTANCES] First instance data:', safeStringify(authorizedInstances[0]));
-              
-              // Try multiple filter strategies
-              instances = authorizedInstances.filter((inst: unknown) => {
+            // Group Filter
+            return authorizedInstances.filter((inst: unknown) => {
                 const i = inst as Record<string, unknown>;
                 const matchGroupId = i.groupId === groupId;
                 const matchGroupObj = (i.group as Record<string, unknown>)?.id === groupId;
                 const matchOwnerId = String(i.ownerId || '').includes(groupId);
                 return matchGroupId || matchGroupObj || matchOwnerId;
-              });
-              logger.info(`[INSTANCES] After filtering: ${instances.length} instances for this group`);
-            }
-          }
-        } catch (e: unknown) {
-          const err = e as { message?: string };
-          logger.warn('[INSTANCES] SDK getUserGroupInstances failed:', err.message);
-        }
-      }
-
-      // Strategy 3: Use client.get if available  
-      if (instances.length === 0) {
-        try {
-          const clientAny = client as Record<string, unknown>;
-          if (typeof clientAny.get === 'function') {
-            logger.info('[INSTANCES] Trying client.get fallback');
-            
-            // Try specific group endpoint first
+            });
+        },
+        // Strategy 3: Client.get Fallback
+        async () => {
+            const clientAny = client as Record<string, unknown>;
+            if (typeof clientAny.get !== 'function') throw new Error('Client.get missing');
             const url = `users/${userId}/instances/groups/${groupId}`;
-            logger.info('[INSTANCES] Calling:', url);
             const response = await (clientAny.get as CallableFunction)(url);
             const data = (response as { data?: unknown })?.data ?? response;
-            logger.info('[INSTANCES] client.get response:', safeStringify(data));
-            instances = extractArray(data);
-          }
-        } catch (e: unknown) {
-          const err = e as { message?: string };
-          logger.warn('[INSTANCES] client.get failed:', err.message);
+            return extractArray(data);
+        },
+        // Strategy 4: getGroupInstances
+        async () => {
+             const clientAny = client as Record<string, unknown>;
+             if (typeof clientAny.getGroupInstances !== 'function') throw new Error('SDK method missing');
+             const response = await (clientAny.getGroupInstances as CallableFunction)({ path: { groupId } });
+             const data = (response as { data?: unknown })?.data ?? response;
+             return extractArray(data);
         }
-      }
+    ];
 
-      // Strategy 4: Try the getGroupInstances method (different from user-specific)
-      if (instances.length === 0) {
-        try {
-          const clientAny = client as Record<string, unknown>;
-          if (typeof clientAny.getGroupInstances === 'function') {
-            logger.info('[INSTANCES] Trying SDK method: getGroupInstances');
-            const response = await (clientAny.getGroupInstances as CallableFunction)({ 
-              path: { groupId } 
-            });
-            const data = (response as { data?: unknown })?.data ?? response;
-            logger.info('[INSTANCES] getGroupInstances response:', safeStringify(data));
-            instances = extractArray(data);
-          }
-        } catch (e: unknown) {
-          const err = e as { message?: string };
-          logger.warn('[INSTANCES] SDK getGroupInstances failed:', err.message);
-        }
-      }
-
-      logger.info(`[INSTANCES] Final result: ${instances.length} instances for group ${groupId}`);
-      
-      if (instances.length > 0) {
-        logger.info('[INSTANCES] Sample instance:', safeStringify(instances[0]));
-      }
-      
-      return { success: true, instances };
-      
-    } catch (error: unknown) {
-      const err = error as { message?: string; stack?: string };
-      logger.error('[INSTANCES] Fatal error:', err.message);
-      logger.error('[INSTANCES] Stack:', err.stack);
-      return { success: false, error: err.message || 'Failed to fetch instances' };
-    }
+    return networkService.executeWithFallback(strategies, `groups:get-instances:${groupId}`).then(res => {
+         if (res.success) return { success: true, instances: res.data };
+         return { success: false, error: res.error || 'Failed to fetch instances' };
+    });
   });
 
   // Ban a user from a group
@@ -553,189 +456,189 @@ export function setupGroupHandlers() {
       return { success: false, error: authCheck.error };
     }
     
-    const client = getVRChatClient();
-    if (!client) throw new Error("Not authenticated");
+    return networkService.execute(async () => {
+        const client = getVRChatClient();
+        if (!client) throw new Error("Not authenticated");
+        logger.info(`[GroupService] Banning user ${userId} from group ${groupId}`);
+        
+        const response = await client.banGroupMember({ 
+          path: { groupId }, 
+          body: { userId } 
+        });
+        
+        discordWebhookService.sendEvent(
+            groupId,
+            '🚫 User Banned (Manual)',
+            `**User**: ${userId}\n**Action**: Banned via Dashboard\n**Admin**: ${getCurrentUserId()}`,
+            0xED4245
+        ).catch(e => logger.error('Webhook failed', e));
 
-    try {
-      logger.info(`[GroupService] Banning user ${userId} from group ${groupId}`);
-      
-      // Use correct SDK syntax with path and body parameters
-      const response = await client.banGroupMember({ 
-        path: { groupId }, 
-        body: { userId } 
-      });
-      
-      if (response.error) {
-        logger.error(`[GroupService] Ban API returned error:`, response.error);
-        const errorMessage = (response.error as { message?: string }).message || 'Ban failed';
-        return { success: false, error: errorMessage };
-      }
-      
-      logger.info(`[GroupService] Successfully banned user ${userId} from group ${groupId}`);
-      return { success: true };
-    } catch (e: unknown) {
-      const err = e as { message?: string; response?: { data?: { error?: { message?: string } } } };
-      logger.error(`[GroupService] Failed to ban user ${userId} from group ${groupId}:`, e);
-      const msg = err.response?.data?.error?.message || err.message || 'Unknown error';
-      return { success: false, error: msg };
-    }
+        return { success: true };
+    }, `groups:ban-user:${groupId}:${userId}`).then(res => {
+        if (res.success) return { success: true };
+        return { success: false, error: res.error };
+    });
+  });
+
+  // Unban a user from a group
+  ipcMain.handle('groups:unban-user', async (_event, { groupId, userId }: { groupId: string; userId: string }) => {
+    // SECURITY: Validate group access first
+    const authCheck = groupAuthorizationService.validateAccessSafe(groupId, 'groups:unban-user');
+    if (!authCheck.allowed) return { success: false, error: authCheck.error };
+    
+    const client = getVRChatClient();
+    if (!client) return { success: false, error: "Not authenticated" };
+
+    const strategies = [
+        // Strategy 1: SDK unbanGroupMember
+        async () => {
+             // eslint-disable-next-line @typescript-eslint/no-explicit-any
+             const clientAny = client as any;
+             if (typeof clientAny.unbanGroupMember !== 'function') throw new Error('SDK method missing');
+             await clientAny.unbanGroupMember({ path: { groupId, userId } });
+             return true;
+        },
+         // Strategy 2: Raw Fetch (DELETE /groups/{groupId}/bans/{userId})
+         async () => {
+             const cookies = getAuthCookieString();
+             const url = `https://api.vrchat.cloud/api/1/groups/${groupId}/bans/${userId}`;
+             const response = await fetch(url, {
+                method: 'DELETE',
+                headers: {
+                    'Cookie': cookies || '',
+                    'User-Agent': 'VRChatGroupGuard/1.0.0 (admin@groupguard.app)',
+                    'Content-Type': 'application/json'
+                }
+             });
+             
+             if (response.ok || response.status === 404) return true;
+             throw new Error(`API Error: ${response.status} ${await response.text()}`);
+         }
+    ];
+
+    return networkService.executeWithFallback(strategies, `groups:unban-user:${groupId}:${userId}`).then(res => {
+        if (res.success) {
+             discordWebhookService.sendEvent(
+                groupId,
+                '🔓 User Unbanned (Manual)',
+                `**User**: ${userId}\n**Action**: Unbanned via Dashboard\n**Admin**: ${getCurrentUserId()}`,
+                0x57F287
+            ).catch(e => logger.error('Webhook failed', e));
+
+            return { success: true };
+        }
+        return { success: false, error: res.error };
+    });
   });
   // Get group messages
   // ... (omitted, assuming no collision)
 
   // Get group roles
   ipcMain.handle('groups:get-roles', async (_event, { groupId }: { groupId: string }) => {
-    try {
-      // SECURITY: Validate group access
-      groupAuthorizationService.validateAccess(groupId, 'groups:get-roles');
-      
-      const client = getVRChatClient();
-      if (!client) throw new Error("Not authenticated");
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const clientAny = client as any;
-      
-      let roles: unknown[] = [];
-      let success = false;
-      let error = '';
+    // SECURITY: Validate group access
+    groupAuthorizationService.validateAccess(groupId, 'groups:get-roles');
+    
+    const client = getVRChatClient();
+    if (!client) return { success: false, error: "Not authenticated" };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const clientAny = client as any;
 
-      // Strategy 0: Check for internal Axios
-      const axiosInstance = clientAny.axios || clientAny.api;
+    const strategies = [
+        // Strategy 1: SDK Method
+        async () => {
+            if (typeof clientAny.getGroupRoles !== 'function') throw new Error('SDK method missing');
+            const response = await clientAny.getGroupRoles({ path: { groupId } });
+            return extractArray(response.data);
+        },
+        // Strategy 2: Axios Re-use
+        async () => {
+             const axiosInstance = clientAny.axios || clientAny.api;
+             if (!axiosInstance) throw new Error('Axios missing');
+             const response = await axiosInstance.get(`groups/${groupId}/roles`);
+             const data = response.data || response;
+             return extractArray(data);
+        },
+        // Strategy 3: Raw Request (Fetch)
+        async () => {
+             const cookies = getAuthCookieString();
+             const url = `https://api.vrchat.cloud/api/1/groups/${groupId}/roles`;
+             const response = await fetch(url, {
+                method: 'GET',
+                headers: {
+                    'Cookie': cookies || '',
+                    'User-Agent': 'VRChatGroupGuard/1.0.0 (admin@groupguard.app)',
+                    'Content-Type': 'application/json'
+                }
+             });
+             if (!response.ok) throw new Error(`Fetch status: ${response.status}`);
+             const data = await response.json();
+             return extractArray(data);
+        }
+    ];
 
-      // Strategy 1: SDK Method
-      if (typeof clientAny.getGroupRoles === 'function') {
-           try {
-               const response = await clientAny.getGroupRoles({ path: { groupId } });
-               if (!response.error) {
-                   roles = extractArray(response.data);
-                   success = true;
-               }
-           } catch (e) {
-               logger.warn('SDK getGroupRoles failed', e);
-           }
-      }
-
-      // Strategy 2: Axios Re-use (preserves session cookies)
-      if (!success && axiosInstance) {
-           try {
-               logger.info('Attempting roles fetch via client.axios');
-               const response = await axiosInstance.get(`groups/${groupId}/roles`);
-               const data = response.data || response;
-               roles = extractArray(data);
-               success = true;
-           } catch (e) {
-                logger.warn('Axios strategy failed', e);
-           }
-      }
-
-      // Strategy 3: Raw Request (Fetch)
-      if (!success) {
-          try {
-              const cookies = getAuthCookieString();
-              const url = `https://api.vrchat.cloud/api/1/groups/${groupId}/roles`;
-              logger.info(`Fetching roles via fallback FETCH: ${url} (Cookies present: ${!!cookies})`);
-              
-              const response = await fetch(url, {
-                  method: 'GET',
-                  headers: {
-                      'Cookie': cookies || '',
-                      'User-Agent': 'VRChatGroupGuard/1.0.0 (admin@groupguard.app)',
-                      'Content-Type': 'application/json'
-                  }
-              });
-              
-              if (response.ok) {
-                  const data = await response.json();
-                  roles = extractArray(data);
-                  success = true;
-              } else {
-                  error = `Fetch status: ${response.status} ${response.statusText}`;
-                  logger.warn('Fetch roles failed:', response.status, await response.text());
-              }
-          } catch (e) {
-              logger.error('Raw fetch groups/:id/roles failed', e);
-              error = (e as Error).message;
-          }
-      }
-
-      if (!success) {
-          return { success: false, error: error || 'Failed to fetch roles' };
-      }
-      
-      return { success: true, roles };
-    } catch (error: unknown) {
-      const err = error as { message?: string };
-      logger.error('Failed to fetch group roles:', error);
-      return { success: false, error: err.message || 'Failed to fetch roles' };
-    }
+    return networkService.executeWithFallback(strategies, `groups:get-roles:${groupId}`).then(res => {
+         if (res.success) return { success: true, roles: res.data };
+         return { success: false, error: res.error };
+    });
   });
 
   // Add role to member
   ipcMain.handle('groups:add-member-role', async (_event, { groupId, userId, roleId }: { groupId: string, userId: string, roleId: string }) => {
-      try {
-          // SECURITY: Validate group access
-          groupAuthorizationService.validateAccess(groupId, 'groups:add-member-role');
-          
-          const client = getVRChatClient();
-          if (!client) throw new Error("Not authenticated");
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const clientAny = client as any;
-          
-          logger.info(`Adding role ${roleId} to user ${userId} in group ${groupId}`);
+      // SECURITY: Validate group access
+      groupAuthorizationService.validateAccess(groupId, 'groups:add-member-role');
+      
+      const client = getVRChatClient();
+      if (!client) return { success: false, error: "Not authenticated" };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const clientAny = client as any;
+      
+      logger.info(`Adding role ${roleId} to user ${userId} in group ${groupId}`);
 
-          const axiosInstance = clientAny.axios || clientAny.api;
+      const strategies = [
+        // Strategy 1: SDK
+        async () => {
+            if (typeof clientAny.addRoleToGroupMember !== 'function') throw new Error('SDK method missing');
+            await clientAny.addRoleToGroupMember({ path: { groupId, userId, roleId } });
+            return true;
+        },
+        // Strategy 2: Axios Re-use
+        async () => {
+             const axiosInstance = clientAny.axios || clientAny.api;
+             if (!axiosInstance) throw new Error('Axios missing');
+             const url = `groups/${groupId}/members/${userId}/roles/${roleId}`;
+             await axiosInstance.put(url, {}); // Empty body often needed for PUT
+             return true;
+        },
+        // Strategy 3: Raw Request (Fetch)
+        async () => {
+             const cookies = getAuthCookieString();
+             const url = `https://api.vrchat.cloud/api/1/groups/${groupId}/members/${userId}/roles/${roleId}`;
+             const response = await fetch(url, {
+                method: 'PUT',
+                headers: {
+                    'Cookie': cookies || '',
+                    'User-Agent': 'VRChatGroupGuard/1.0.0 (admin@groupguard.app)',
+                    'Content-Type': 'application/json'
+                }
+             });
+             
+             if (response.ok) return true;
+             throw new Error(`Fetch status: ${response.status}`);
+        }
+      ];
 
-          // Strategy 1: SDK
-          if (typeof clientAny.addRoleToGroupMember === 'function') {
-               try {
-                   await clientAny.addRoleToGroupMember({ path: { groupId, userId, roleId } });
-                   return { success: true };
-               } catch (e) {
-                   logger.warn('SDK addRoleToGroupMember failed', e);
-               }
+      return networkService.executeWithFallback(strategies, `groups:add-member-role:${groupId}:${userId}`).then(res => {
+          if (res.success) {
+               discordWebhookService.sendEvent(
+                    groupId,
+                    '👮 Role Added',
+                    `**User**: ${userId}\n**Role ID**: ${roleId}\n**Admin**: ${getCurrentUserId()}`,
+                    0xFEE75C
+                ).catch(e => logger.error('Webhook failed', e));
+              return { success: true };
           }
-
-          // Strategy 2: Axios Re-use
-          if (axiosInstance) {
-              try {
-                  const url = `groups/${groupId}/members/${userId}/roles/${roleId}`;
-                  logger.info('Attempting add role via client.axios:', url);
-                  await axiosInstance.put(url, {}); // Empty body often needed for PUT
-                  return { success: true };
-              } catch (e) {
-                   logger.warn('Axios strategy for add role failed', e);
-              }
-          }
-
-          // Strategy 3: Raw Request (Fetch)
-          try {
-              const cookies = getAuthCookieString();
-              const url = `https://api.vrchat.cloud/api/1/groups/${groupId}/members/${userId}/roles/${roleId}`;
-              logger.info(`Fallback FETCH Add Role: ${url}`);
-              
-              const response = await fetch(url, {
-                  method: 'PUT',
-                  headers: {
-                      'Cookie': cookies || '',
-                      'User-Agent': 'VRChatGroupGuard/1.0.0 (admin@groupguard.app)',
-                      'Content-Type': 'application/json'
-                  },
-                  body: '{}' // Explicit empty body
-              });
-              
-              if (response.ok) {
-                  return { success: true };
-              }
-              const errText = await response.text();
-              logger.error('Fallback Add Role failed:', response.status, errText);
-              return { success: false, error: `API Error: ${response.status}` };
-          } catch (e) {
-              return { success: false, error: (e as Error).message };
-          }
-      } catch (error: unknown) {
-          const err = error as { message?: string };
-          logger.error('Failed to add member role:', error);
-          return { success: false, error: err.message || 'Failed to add role' };
-      }
+          return { success: false, error: res.error };
+      });
   });
 
   // Remove role from member
@@ -805,109 +708,61 @@ export function setupGroupHandlers() {
   });
   // Respond to group join request
   ipcMain.handle('groups:respond-request', async (_event, { groupId, userId, action }: { groupId: string, userId: string, action: 'accept' | 'deny' }) => {
-      try {
-          // SECURITY: Validate group access
-          groupAuthorizationService.validateAccess(groupId, 'groups:respond-request');
-          
-          const client = getVRChatClient();
-          if (!client) throw new Error("Not authenticated");
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const clientAny = client as any;
-          const axiosInstance = clientAny.axios || clientAny.api;
+      // SECURITY: Validate group access
+      const authCheck = groupAuthorizationService.validateAccessSafe(groupId, 'groups:respond-request');
+      if (!authCheck.allowed) return { success: false, error: authCheck.error };
+      
+      const client = getVRChatClient();
+      if (!client) return { success: false, error: "Not authenticated" };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const clientAny = client as any;
+      const axiosInstance = clientAny.axios || clientAny.api;
 
-          const apiAction = action === 'deny' ? 'reject' : 'accept';
-          logger.info(`Responding to join request for ${userId} in ${groupId}: ${apiAction}`);
+      const apiAction = action === 'deny' ? 'reject' : 'accept';
+      logger.info(`Responding to join request for ${userId} in ${groupId}: ${apiAction}`);
 
-          // Strategy 1: SDK (respondGroupJoinRequest)
-          // Note: The method is named 'respondGroupJoinRequest' in the generated SDK, NOT 'respondToGroupJoinRequest'
-
-          if (typeof clientAny.respondGroupJoinRequest === 'function') {
-               try {
-                   logger.info('Strategy 1: Attempting SDK respondGroupJoinRequest');
-                   const response = await clientAny.respondGroupJoinRequest({ 
-                       path: { groupId, userId },
-                       body: { action: apiAction }
-                   });
-                   
-                   if (response.error) {
-                       logger.warn('Strategy 1 returned API error:', response.error);
-                       throw new Error(`SDK Error: ${response.error.message || 'Unknown error'}`);
-                   }
-                   
-                   logger.info('Strategy 1 success');
-                   return { success: true };
-                } catch (e: unknown) {
-                    const err = e as { message?: string; response?: { status?: number } };
-                    logger.warn('Strategy 1 failed:', err.message);
-                    if (err.response) logger.warn('Strategy 1 response status:', err.response.status);
-                }
-          } else if (typeof clientAny.respondToGroupJoinRequest === 'function') {
-               // Fallback to "To" variation just in case
-               try {
-                   logger.info('Strategy 1b: Attempting SDK respondToGroupJoinRequest');
-                   const response = await clientAny.respondToGroupJoinRequest({ 
-                       path: { groupId, userId },
-                       body: { action: apiAction }
-                   });
-                   if (response.error) {
-                       throw new Error(`SDK Error: ${response.error.message}`);
-                   }
-                   return { success: true };
-                } catch (e: unknown) {
-                    const err = e as { message?: string };
-                    logger.warn('Strategy 1b failed:', err.message);
-                }
-          } else {
-              logger.info('Strategy 1: respondGroupJoinRequest method not found on client');
-          }
-
-          // Strategy 1.5: Generic SDK Request
-          // Sometimes generated methods are missing but the generic request capability exists
-          try {
-             if (typeof clientAny.put === 'function') {
-                  logger.info('Strategy 1.5: Attempting client.put');
-                  // SDK likely wraps axios or similar
-                  await clientAny.put(`groups/${groupId}/requests/${userId}`, { action: apiAction });
-                  return { success: true };
-             } else if (typeof clientAny.request === 'function') {
-                  logger.info('Strategy 1.5: Attempting client.request');
-                  await clientAny.request({
-                      method: 'PUT',
-                      url: `groups/${groupId}/requests/${userId}`,
-                      body: { action: apiAction },
-                      // Ensure auth headers are included if manual
-                      headers: {'Content-Type': 'application/json'}
-                  });
-                  return { success: true };
-             }
-          } catch (e: unknown) {
-              const err = e as { message?: string };
-              logger.warn('Strategy 1.5 failed:', err.message);
-          }
-
-          // Strategy 2: Axios Re-use
-          if (axiosInstance) {
-              try {
-                  const url = `groups/${groupId}/requests/${userId}`;
-                  logger.info('Strategy 2: Attempting client.axios PUT:', url);
-                  await axiosInstance.put(url, { action: apiAction });
-                  return { success: true };
-              } catch (e: unknown) {
-                   const err = e as { message?: string; response?: { status?: number; data?: unknown } };
-                   logger.warn('Strategy 2 failed:', err.message);
-                   if (err.response) logger.warn('Strategy 2 response:', err.response.status, err.response.data);
+      const strategies = [
+          // Strategy 1: SDK Methods
+          async () => {
+              if (typeof clientAny.respondGroupJoinRequest === 'function') {
+                  const response = await clientAny.respondGroupJoinRequest({ path: { groupId, userId }, body: { action: apiAction } });
+                  if (response.error) throw new Error(response.error.message);
+                  return true;
               }
-          } else {
-              logger.info('Strategy 2: axios instance not found on client');
-          }
-
-          // Strategy 3: Raw Request (Fetch)
-          try {
+              if (typeof clientAny.respondToGroupJoinRequest === 'function') {
+                  const response = await clientAny.respondToGroupJoinRequest({ path: { groupId, userId }, body: { action: apiAction } });
+                  if (response.error) throw new Error(response.error.message);
+                  return true;
+              }
+              throw new Error('SDK method missing');
+          },
+          // Strategy 2: Generic SDK Request
+          async () => {
+              if (typeof clientAny.put === 'function') {
+                   await clientAny.put(`groups/${groupId}/requests/${userId}`, { action: apiAction });
+                   return true;
+              }
+              if (typeof clientAny.request === 'function') {
+                   await clientAny.request({
+                       method: 'PUT',
+                       url: `groups/${groupId}/requests/${userId}`,
+                       body: { action: apiAction },
+                       headers: {'Content-Type': 'application/json'}
+                   });
+                   return true;
+              }
+              throw new Error('Generic SDK method missing');
+          },
+          // Strategy 3: Axios
+          async () => {
+              if (!axiosInstance) throw new Error('Axios missing');
+              await axiosInstance.put(`groups/${groupId}/requests/${userId}`, { action: apiAction });
+              return true;
+          },
+          // Strategy 4: Raw Fetch
+          async () => {
                const cookies = getAuthCookieString();
-               logger.info(`Strategy 3: Attempting Fallback Fetch. Cookies present: ${!!cookies} (Length: ${cookies?.length || 0})`);
-               
                const url = `https://api.vrchat.cloud/api/1/groups/${groupId}/requests/${userId}`;
-               
                const response = await fetch(url, {
                    method: 'PUT',
                    headers: {
@@ -917,30 +772,27 @@ export function setupGroupHandlers() {
                    },
                    body: JSON.stringify({ action: apiAction })
                });
-               
-               if (response.ok) {
-                   return { success: true };
-               }
-               const errText = await response.text();
-               logger.error('Strategy 3 failed:', response.status, errText);
-               
-               // If 401, trying to log more context
-               if (response.status === 401) {
-                    logger.error('Strategy 3 401 Context:', { 
-                        hasCookies: !!cookies, 
-                        cookieLength: cookies?.length
-                    });
-               }
-
-               return { success: false, error: `API Error: ${response.status}` };
-          } catch (e) {
-               return { success: false, error: (e as Error).message };
+               if (!response.ok) throw new Error(`API Error: ${response.status} ${await response.text()}`);
+               return true;
           }
-      } catch (error: unknown) {
-          const err = error as { message?: string };
-          logger.error('Failed to respond to request:', error);
-          return { success: false, error: err.message || 'Failed to respond to request' };
-      }
+      ];
+
+      return networkService.executeWithFallback(strategies, `groups:respond-request:${groupId}:${userId}`).then(res => {
+          if (res.success) {
+               const color = action === 'accept' ? 0x57F287 : 0xED4245;
+               const title = action === 'accept' ? '✅ Join Request Accepted' : '❌ Join Request Denied';
+               
+               discordWebhookService.sendEvent(
+                    groupId,
+                    title,
+                    `**User**: ${userId}\n**Action**: ${action.toUpperCase()} via Dashboard\n**Admin**: ${getCurrentUserId()}`,
+                    color
+                ).catch(e => logger.error('Webhook failed', e));
+              
+              return { success: true };
+          }
+          return { success: false, error: res.error };
+      });
   });
 }
 

@@ -5,6 +5,8 @@ import { useAuthStore } from '../../stores/authStore';
 import { motion } from 'framer-motion';
 import { useTheme } from '../../context/ThemeContext';
 import { OscSettings } from './OscSettings';
+import { DiscordRpcSettings } from './DiscordRpcSettings';
+import { DiscordWebhookSettings } from './DiscordWebhookSettings';
 
 const HueSpectrumPicker: React.FC<{ 
     label: string; 
@@ -68,7 +70,7 @@ const HueSpectrumPicker: React.FC<{
 
 export const SettingsView: React.FC = () => {
   const { rememberMe, setRememberMe } = useAuthStore();
-  const { primaryHue, setPrimaryHue, accentHue, setAccentHue, resetTheme } = useTheme();
+  const { primaryHue, setPrimaryHue, accentHue, setAccentHue, uiScale, setUiScale, resetTheme } = useTheme();
 
   const handleClearCredentials = async () => {
     if (confirm('Are you sure you want to clear saved login data?')) {
@@ -77,21 +79,33 @@ export const SettingsView: React.FC = () => {
     }
   };
 
+  const handleResetLayout = async () => {
+      if (confirm('Are you sure you want to reset the dashboard layout to default?')) {
+          if (window.electron?.uiLayout?.delete) {
+            await window.electron.uiLayout.delete('dashboardState');
+          }
+          window.location.reload();
+      }
+  };
+
   return (
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      style={{ padding: '2rem', maxWidth: '800px', margin: '0 auto', height: '100%', overflowY: 'auto' }}
+      style={{ padding: '2rem', paddingBottom: 'var(--dock-height)', maxWidth: '800px', margin: '0 auto', height: '100%', overflowY: 'auto' }}
     >
       <h1 className="text-gradient" style={{ fontSize: '2.5rem', marginBottom: '2rem' }}>SETTINGS</h1>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem', paddingBottom: '2rem' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
         
         {/* Appearance Section */}
         <section>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.5rem' }}>
              <h2 style={{ color: 'white', margin: 0 }}>Appearance</h2>
-             <NeonButton variant="ghost" onClick={resetTheme} style={{ fontSize: '0.8rem', padding: '0.2rem 0.5rem' }}>Reset Defaults</NeonButton>
+             <div style={{ display: 'flex', gap: '0.5rem' }}>
+                 <NeonButton variant="ghost" onClick={handleResetLayout} style={{ fontSize: '0.8rem', padding: '0.2rem 0.5rem' }}>Reset Layout</NeonButton>
+                 <NeonButton variant="ghost" onClick={resetTheme} style={{ fontSize: '0.8rem', padding: '0.2rem 0.5rem' }}>Reset Theme</NeonButton>
+             </div>
           </div>
           
           <GlassPanel>
@@ -108,8 +122,46 @@ export const SettingsView: React.FC = () => {
                 />
             </div>
             
-            <p style={{ fontSize: '0.8rem', color: 'var(--color-text-dim)', fontStyle: 'italic', textAlign: 'center' }}>
-              Select a color from the spectrum to update the application theme instantly. The theme is automatically saved.
+            {/* UI Scale Slider */}
+            <div style={{ marginTop: '1.5rem', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '1.5rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                <span style={{ color: 'white', fontWeight: 600 }}>UI Scale</span>
+                <span style={{ 
+                  color: 'var(--color-primary)', 
+                  fontWeight: 700,
+                  fontSize: '0.9rem',
+                  background: 'rgba(var(--primary-hue), 100%, 50%, 0.1)',
+                  padding: '2px 8px',
+                  borderRadius: '4px'
+                }}>
+                  {Math.round(uiScale * 100)}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min="0.7"
+                max="1.2"
+                step="0.1"
+                value={uiScale}
+                onChange={(e) => setUiScale(parseFloat(e.target.value))}
+                style={{
+                  width: '100%',
+                  cursor: 'pointer',
+                  accentColor: 'var(--color-primary)'
+                }}
+              />
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.7rem', color: 'var(--color-text-dim)', marginTop: '4px' }}>
+                <span>Compact (70%)</span>
+                <span>Default (100%)</span>
+                <span>Large (120%)</span>
+              </div>
+              <p style={{ fontSize: '0.75rem', color: 'var(--color-text-dim)', fontStyle: 'italic', marginTop: '0.5rem' }}>
+                Adjusts dashboard widget minimum sizes and row heights. Smaller values allow more compact layouts.
+              </p>
+            </div>
+            
+            <p style={{ fontSize: '0.8rem', color: 'var(--color-text-dim)', fontStyle: 'italic', textAlign: 'center', marginTop: '1rem' }}>
+              Theme settings are automatically saved.
             </p>
           </GlassPanel>
         </section>
@@ -163,6 +215,12 @@ export const SettingsView: React.FC = () => {
 
         {/* OSC Integration */}
         <OscSettings />
+
+        {/* Discord Webhook */}
+        <DiscordWebhookSettings />
+
+        {/* Discord RPC */}
+        <DiscordRpcSettings />
 
         {/* About Section */}
         <section>

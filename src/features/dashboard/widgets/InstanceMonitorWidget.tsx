@@ -1,66 +1,64 @@
 
-import React, { useState } from 'react';
+import React from 'react';
 import { GlassPanel } from '../../../components/ui/GlassPanel';
 import { LiveBadge } from '../../../components/ui/LiveBadge';
 import { useGroupStore } from '../../../stores/groupStore';
 import { useInstanceMonitorStore } from '../../../stores/instanceMonitorStore';
 import { useUserProfileStore } from '../../../stores/userProfileStore';
-import { MassInviteDialog } from '../dialogs/MassInviteDialog';
-import { NeonButton } from '../../../components/ui/NeonButton';
-import { Users } from 'lucide-react';
 
 export const InstanceMonitorWidget: React.FC = () => {
     const { openProfile } = useUserProfileStore();
     const { currentWorldName, currentWorldId, currentLocation, currentGroupId, players } = useInstanceMonitorStore();
     const { instances, myGroups, selectedGroup: activeGroup } = useGroupStore();
-    const [showMassInvite, setShowMassInvite] = useState(false);
 
-    // Check if current location matches any active group instance (Strict or Robust)
-    let groupInstance = currentLocation ? instances.find(inst => {
-         // 1. Strict Match
+    // PRIMARY DETECTION: Log watcher (IPC) tells us if we're in a group instance
+    // This is the single source of truth from VRChat log parsing
+    const isCurrentGroupFromLogs = !!(currentGroupId && activeGroup && currentGroupId === activeGroup.id);
+
+    // Try to find matching instance from API for extra metadata (optional, may be stale)
+    const apiInstance = currentLocation ? instances.find(inst => {
          if (inst.location === currentLocation) return true;
          const instFullId = inst.worldId && inst.instanceId ? `${inst.worldId}:${inst.instanceId}` : '';
          if (instFullId === currentLocation) return true;
-
-         // 2. Robust Match: Check World ID + Base Instance ID (ignoring tags)
          if (!currentLocation.includes(':')) return false;
-         
          const [currWId, currIId] = currentLocation.split(':');
          const instWId = inst.worldId;
-         // inst.instanceId might contain tags, so split it too
          const instIId = inst.instanceId || (inst.location ? inst.location.split(':')[1] : '');
-
          if (currWId !== instWId) return false;
-         
-         // Compare base IDs (everything before first '~')
          const currBase = currIId.split('~')[0];
          const instBase = instIId.split('~')[0];
-
          return currBase && instBase && currBase === instBase;
     }) : null;
 
-    // Fallback: Use log data to detect group instance if API list is stale or mismatched
-    if (!groupInstance && currentGroupId && activeGroup && currentGroupId === activeGroup.id) {
-         // Create a synthetic instance object to allow the UI to render "Group Instance" mode
-          
-         groupInstance = {
-             location: currentLocation || '',
-             worldId: currentWorldId || '',
-             instanceId: currentWorldId && currentLocation ? currentLocation.replace(`${currentWorldId}:`, '') : '',
-             ownerId: activeGroup.id,
-             count: Object.keys(players).length,
-             world: {
-                 name: currentWorldName || 'Unknown World'
-             },
-             group: activeGroup
-         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-         } as any;
+    // Determine if we should show group instance mode:
+    // 1. Log watcher says it's the selected group's instance (most reliable)
+    // 2. OR API instances list has a match for the selected group
+    const isCurrentGroupInstance = isCurrentGroupFromLogs || 
+        (apiInstance && activeGroup && apiInstance.ownerId === activeGroup.id);
+
+    // Build the instance object to display
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let groupInstance: any = null;
+    
+    if (isCurrentGroupInstance) {
+        // Use API data if available and matches, otherwise create synthetic
+        if (apiInstance && apiInstance.ownerId === activeGroup?.id) {
+            groupInstance = apiInstance;
+        } else if (activeGroup) {
+            // Create synthetic instance from log data
+            groupInstance = {
+                location: currentLocation || '',
+                worldId: currentWorldId || '',
+                instanceId: currentWorldId && currentLocation ? currentLocation.replace(`${currentWorldId}:`, '') : '',
+                ownerId: activeGroup.id,
+                count: Object.keys(players).length,
+                world: { name: currentWorldName || 'Unknown World' },
+                group: activeGroup
+            };
+        }
     }
 
-    // Check if the matched instance belongs to the CURRENTLY SELECTED group
-    const isCurrentGroupInstance = groupInstance && activeGroup && groupInstance.ownerId === activeGroup.id;
-
-    // If no world ID, show status (Name might be missing in some log formats)
+    // If no world ID, show waiting state
     if (!currentWorldId && !currentWorldName) {
         return (
             <GlassPanel style={{ height: '100%', padding: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
@@ -72,8 +70,8 @@ export const InstanceMonitorWidget: React.FC = () => {
         );
     }
     
-    // If user is in VRChat but NOT in a tracked group instance, show Standby mode
-    if (!groupInstance) {
+    // If in VRChat but NOT in the selected group's instance, show Roaming mode
+    if (!isCurrentGroupInstance) {
         return (
              <GlassPanel style={{ height: '100%', padding: '0.75rem', display: 'flex', alignItems: 'center', justifyContent: 'center', flexDirection: 'column' }}>
                 <div style={{ textAlign: 'center', color: 'var(--color-text-dim)', maxWidth: '90%' }}>
@@ -90,7 +88,9 @@ export const InstanceMonitorWidget: React.FC = () => {
                     <div style={{ fontSize: '0.7rem', marginTop: '0.75rem', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '0.4rem' }}>
                         Join a <strong>{activeGroup?.name || 'Group'}</strong> instance to activate Command Center
                     </div>
+
                 </div>
+
             </GlassPanel>
         );
     }
@@ -150,16 +150,7 @@ export const InstanceMonitorWidget: React.FC = () => {
                          textOverflow: 'ellipsis'
                      }}>{currentWorldId}</div>
                 </div>
-                {/* Mass Invite Button (Small) */}
-                <NeonButton 
-                    size="sm" 
-                    variant="ghost" 
-                    onClick={() => setShowMassInvite(true)}
-                    title="Mass Invite Friends"
-                    style={{ padding: '4px 8px', marginRight: '6px' }}
-                >
-                    <Users size={14} />
-                </NeonButton>
+
                 
                 <div style={{ textAlign: 'right', flex: '0 0 auto', marginTop: '-4px' }}>
                     <div style={{ fontSize: '1.6rem', fontWeight: 'bold', color: 'var(--color-primary)', lineHeight: 1 }}>{playerCount}</div>
@@ -207,8 +198,7 @@ export const InstanceMonitorWidget: React.FC = () => {
                     </div>
                 )}
             </div>
-            {/* Mass Invite Dialog */ }
-            <MassInviteDialog isOpen={showMassInvite} onClose={() => setShowMassInvite(false)} />
+
         </GlassPanel>
     );
 };

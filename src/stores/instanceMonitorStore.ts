@@ -80,7 +80,9 @@ export const useInstanceMonitorStore = create<InstanceMonitorState>((set) => ({
   
   setInstanceImage: (url) => set({ instanceImageUrl: url }),
   
-  clearInstance: () => set({ players: {}, currentWorldId: null, currentWorldName: null, currentInstanceId: null, currentLocation: null, currentGroupId: null, instanceImageUrl: null }),
+  // NOTE: currentGroupId is NOT cleared here - it's managed by the separate onGroupChanged IPC event
+  // This prevents race conditions when switching instances
+  clearInstance: () => set({ players: {}, currentWorldId: null, currentWorldName: null, currentInstanceId: null, currentLocation: null, instanceImageUrl: null }),
 
   updateLiveScan: (newEntities) => set((state) => {
       const nextMap = new Map<string, LiveEntity>();

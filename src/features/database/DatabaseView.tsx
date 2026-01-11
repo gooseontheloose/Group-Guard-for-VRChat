@@ -194,7 +194,7 @@ export const DatabaseView: React.FC = () => {
     return (
         <>
         <style>{progressStyles}</style>
-        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 1fr) 2fr', gap: '1.5rem', height: '100%', paddingBottom: '100px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 1fr) 2fr', gap: '1.5rem', height: '100%', paddingBottom: 'var(--dock-height)' }}>
             
             {/* Left Column: Session List */}
             <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>

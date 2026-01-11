@@ -4,7 +4,7 @@
   top: 0;
   left: 0;
   right: 0;
-  height: 60px;
+  height: 40px;
   padding: 0 2rem;
   display: flex;
   justify-content: space-between;
@@ -18,7 +18,7 @@
   pointer-events: auto;
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 0.5rem;
   -webkit-app-region: no-drag;
 }
 
@@ -54,6 +54,17 @@
   left: 0;
   width: 300px;
   z-index: var(--z-dropdown);
+  /* Pre-apply blur to prevent pop-in during animation */
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 20px;
+  padding: 0.5rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+  /* GPU acceleration hint for smoother animation */
+  will-change: transform, opacity;
+  transform: translateZ(0);
 }
 
 .settingsButton {

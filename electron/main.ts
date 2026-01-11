@@ -56,6 +56,7 @@ const createWindow = () => {
     minHeight: 800,
     frame: false, // Custom UI requires frameless
     backgroundColor: '#030014', // Match app background to avoid white flash
+    icon: path.join(__dirname, '../build/icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
@@ -141,10 +142,21 @@ import { setupAutoModHandlers } from './services/AutoModService';
 import { setupInstanceHandlers } from './services/InstanceService';
 import { setupOscHandlers } from './services/OscService';
 import { setupOscAnnouncementHandlers } from './services/OscAnnouncementService';
+import { setupDiscordWebhookHandlers } from './services/DiscordWebhookService';
 
 // ...
 
 import { storageService } from './services/StorageService';
+import { discordBroadcastService } from './services/DiscordBroadcastService';
+import { databaseService } from './services/DatabaseService';
+// Storage API
+ipcMain.handle('stats:get-activity', (_e, { groupId, days = 30 }: { groupId: string, days?: number }) => {
+    return databaseService.getDailyActivityStats(groupId, days);
+});
+
+ipcMain.handle('stats:get-heatmap', (_e, { groupId }: { groupId: string }) => {
+    return databaseService.getActivityHeatmap(groupId);
+});
 
 // Storage API
 ipcMain.handle('storage:get-status', () => {
@@ -163,10 +175,32 @@ ipcMain.handle('storage:set-path', (_event, path) => {
   return storageService.setLocation(path);
 });
 
+// UI Layout Store (for dashboard layout persistence)
+import Store from 'electron-store';
+const uiLayoutStore = new Store<{ dashboardLayout: unknown }>({ name: 'ui-layout' });
+
+ipcMain.handle('ui-layout:get', (_event, key: string) => {
+  return uiLayoutStore.get(key);
+});
+
+ipcMain.handle('ui-layout:set', (_event, key: string, value: unknown) => {
+  uiLayoutStore.set(key, value);
+});
+
+ipcMain.handle('ui-layout:delete', (_event, key: string) => {
+  uiLayoutStore.delete(key as keyof typeof uiLayoutStore.store);
+});
+
+ipcMain.handle('ui-layout:has', (_event, key: string) => {
+  return uiLayoutStore.has(key);
+});
+
 // Initialize storage service
 storageService.initialize();
 
-import { databaseService } from './services/DatabaseService';
+discordBroadcastService.connect().catch(err => logger.error('Failed to connect Discord RPC:', err));
+
+
 databaseService.initialize().catch(err => {
     logger.error('Failed to initialize database:', err);
 });
@@ -183,6 +217,7 @@ setupAutoModHandlers();
 setupInstanceHandlers();
 setupOscHandlers();
 setupOscAnnouncementHandlers();
+setupDiscordWebhookHandlers();
 
 // Import to initialize (singleton)
 import './services/InstanceLoggerService';

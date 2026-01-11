@@ -4,6 +4,7 @@ import { GlassPanel } from '../../../components/ui/GlassPanel';
 import { NeonButton } from '../../../components/ui/NeonButton';
 import { useGroupStore } from '../../../stores/groupStore';
 import { ShieldAlert, Check, X, Gavel } from 'lucide-react';
+import { AppShieldIcon } from '../../../components/ui/AppShieldIcon';
 import { motion } from 'framer-motion';
 
 interface BanUserDialogProps {
@@ -104,7 +105,7 @@ export const BanUserDialog: React.FC<BanUserDialogProps> = ({ isOpen, onClose, u
             {!progress ? (
                 <>
                     <GlassPanel style={{ padding: '1rem', background: 'rgba(255,50,50,0.1)', border: '1px solid rgba(255,50,50,0.3)', display: 'flex', gap: '10px', alignItems: 'center' }}>
-                        <ShieldAlert size={24} color="#fca5a5" />
+                        <AppShieldIcon size={24} />
                         <div style={{ fontSize: '0.9rem', color: '#fca5a5' }}>
                             <b>Warning:</b> You are about to ban <b>{user.displayName}</b>. Select the groups to apply this ban to.
                         </div>

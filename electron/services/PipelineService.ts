@@ -16,6 +16,8 @@ import { ipcMain, BrowserWindow } from 'electron';
 import log from 'electron-log';
 import WebSocket from 'ws';
 import { getVRChatClient, isAuthenticated } from './AuthService';
+import { processGroupJoinNotification } from './AutoModService';
+import { windowService } from './WindowService';
 
 // ============================================
 // CONSTANTS
@@ -397,6 +399,13 @@ function handleSpecificEvent(event: PipelineEvent): void {
     case 'notification':
     case 'notification-v2':
       log.info('[Pipeline] Notification received:', event.content);
+      // Process group join request notifications via AutoMod
+      processGroupJoinNotification(event.content as {
+        type?: string;
+        senderUserId?: string;
+        senderUsername?: string;
+        details?: { groupId?: string; groupName?: string };
+      }).catch(err => log.error('[Pipeline] AutoMod notification processing error:', err));
       break;
 
     case 'friend-online':
@@ -423,12 +432,7 @@ function handleSpecificEvent(event: PipelineEvent): void {
  * Emits an event to all renderer windows.
  */
 function emitToRenderer(channel: string, data: unknown): void {
-  const windows = BrowserWindow.getAllWindows();
-  for (const window of windows) {
-    if (!window.isDestroyed()) {
-      window.webContents.send(channel, data);
-    }
-  }
+  windowService.broadcast(channel, data);
 }
 
 /**
@@ -479,8 +483,10 @@ export function setupPipelineHandlers(): void {
 export function onUserLoggedIn(): void {
   log.info('[Pipeline] User logged in, connecting to pipeline...');
   // Small delay to ensure auth is fully set up
-  setTimeout(() => {
-    connectWebSocket();
+  setTimeout(async () => {
+    await connectWebSocket();
+    // AutoMod gatekeeper processing is now triggered by GroupService
+    // when group authorization is initialized
   }, 1000);
 }
 

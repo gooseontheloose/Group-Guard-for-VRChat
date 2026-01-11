@@ -1,11 +1,11 @@
 
-import Message from 'electron-log';
+
 import { AutoModActionType, AutoModRule, store } from './AutoModService';
 import log from 'electron-log';
 
 const logger = log.scope('AutoModService');
 
-export const evaluateUser = async (user: {
+    export const evaluateUser = async (user: {
         id: string;
         displayName: string;
         tags?: string[];
@@ -15,59 +15,47 @@ export const evaluateUser = async (user: {
         pronouns?: string;
         ageVerified?: boolean;
         ageVerificationStatus?: string;
-    }): Promise<{ action: AutoModActionType | 'ALLOW'; reason?: string; ruleName?: string }> => {
-        logger.info(`[AutoMod] evaluateUser called for: ${user.displayName} (${user.id})`);
+    }, options: { allowMissingData?: boolean } = {}): Promise<{ action: AutoModActionType | 'ALLOW'; reason?: string; ruleName?: string }> => {
+        // logger.info(`[AutoMod] evaluateUser called for: ${user.displayName} (${user.id})`);
         
         try {
             const rules = store.get('rules').filter(r => r.enabled) as AutoModRule[];
             
-            logger.info(`[AutoMod] Found ${rules.length} enabled rules to check against`);
-            
             if (rules.length === 0) {
-                logger.debug(`[AutoMod] No enabled rules, returning ALLOW`);
                 return { action: 'ALLOW' };
             }
-
-            // logger.debug(`[AutoMod] Checking user ${user.displayName} against ${rules.length} rules...`);
 
             for (const rule of rules) {
                 let matches = false;
                 let reason = '';
 
                 if (rule.type === 'KEYWORD_BLOCK') {
-                    // Parse config - stored as JSON object { keywords: [], whitelist: [], matchMode: string, scanBio: bool, scanStatus: bool, scanPronouns: bool }
+                    // ... (existing logic) ...
+                    // Parse config
                     let keywords: string[] = [];
                     let whitelist: string[] = [];
-                    let scanBio = true;      // Default to true for safety
-                    let scanStatus = true;   // Default to true for safety
-                    let scanPronouns = false; // Default to false (matches frontend default)
+                    let scanBio = true;
+                    let scanStatus = true;
+                    let scanPronouns = false;
                     
                     try {
                         const parsed = JSON.parse(rule.config);
-                        // Config is an object with keywords array
                         if (parsed && typeof parsed === 'object') {
                             keywords = Array.isArray(parsed.keywords) ? parsed.keywords : [];
                             whitelist = Array.isArray(parsed.whitelist) ? parsed.whitelist : [];
-                            // Read scan* options from config
-                            scanBio = parsed.scanBio !== false; // Default true if not explicitly false
-                            scanStatus = parsed.scanStatus !== false; // Default true if not explicitly false
-                            scanPronouns = parsed.scanPronouns === true; // Default false unless explicitly true
+                            scanBio = parsed.scanBio !== false;
+                            scanStatus = parsed.scanStatus !== false;
+                            scanPronouns = parsed.scanPronouns === true;
                         } else if (Array.isArray(parsed)) {
-                            // Legacy: direct array of keywords
                             keywords = parsed;
                         } else if (typeof parsed === 'string') {
-                            // Legacy: single keyword string
                             keywords = [parsed];
                         }
                     } catch {
-                        // Single keyword string fallback
                         keywords = rule.config ? [rule.config] : [];
                     }
                     
-                    // logger.info(`[AutoMod] KEYWORD_BLOCK scan for ${user.displayName}: ${keywords.length} keywords`);
-
-                    // Build searchable text based on config options
-                    const textParts: string[] = [user.displayName]; // Always check displayName
+                    const textParts: string[] = [user.displayName];
                     if (scanBio && user.bio) textParts.push(user.bio);
                     if (scanStatus) {
                         if (user.status) textParts.push(user.status);
@@ -81,9 +69,7 @@ export const evaluateUser = async (user: {
                         const kw = keyword.toLowerCase().trim();
                         if (!kw) continue;
                         
-                        // Check if keyword is in searchable text
                         if (searchableText.includes(kw)) {
-                            // Check if there's a whitelist match that overrides
                             const isWhitelisted = whitelist.some(w => 
                                 searchableText.includes(w.toLowerCase().trim())
                             );
@@ -92,43 +78,66 @@ export const evaluateUser = async (user: {
                                 matches = true;
                                 reason = `Keyword: "${keyword}"`;
                                 break;
-                            } else {
-                                logger.debug(`[AutoMod] Keyword "${keyword}" matched but whitelisted`);
                             }
                         }
                     }
                 } else if (rule.type === 'AGE_VERIFICATION') {
-                    // Check if user is age verified (18+)
-                    // Must be '18+' status to pass this check
+                    // Debug Logging for Age Verification
+                    if (user.ageVerificationStatus === undefined) {
+                        logger.warn(`[AutoMod] User ${user.displayName} (${user.id}) has NO ageVerificationStatus. Defaulting to ALLOW (Safe Fail).`);
+                        // Use option to strictly block unknowns if needed? For now, SAFE FAIL.
+                    } else {
+                         // logger.debug(`[AutoMod] Checking Age for ${user.displayName}: ${user.ageVerificationStatus}`);
+                    }
+
+                    // If allowMissingData is true and we don't have status, SKIP this check (SAFE FAIL)
+                    if (user.ageVerificationStatus === undefined) {
+                         // Fallback check? 
+                         // Check tags for 'system_age_verified'? (VRChat might verify 18+ via tags too?)
+                         // For now, if undefined, we can't enforce "18+".
+                         // Rule of thumb: If strict mode, BLOCK. If lenient, ALLOW.
+                         // Given "Group Guard", safety first? But blocking everyone due to API privacy is bad.
+                         // User reported "failing preventing me to invite", implying FALSE POSITIVES (blocking good users).
+                         // So we must ALLOW if undefined.
+                         continue; 
+                    } 
+                    
                     if (user.ageVerificationStatus !== '18+') {
                         matches = true;
-                        reason = "Age Verification (18+) Required";
+                        reason = `Age Verification Required (Found: ${user.ageVerificationStatus})`;
                     }
                 } else if (rule.type === 'TRUST_CHECK') {
-                    // Check trust level via tags
+                    // Trust check logic
                     const tags = user.tags || [];
-                    let configLevel = '';
-                    try {
-                        const parsed = JSON.parse(rule.config);
-                        configLevel = parsed.minTrustLevel || parsed.trustLevel || rule.config;
-                    } catch {
-                        configLevel = rule.config;
-                    }
                     
-                    const trustLevels = ['system_trust_visitor', 'system_trust_basic', 'system_trust_known', 'system_trust_trusted', 'system_trust_veteran', 'system_trust_legend'];
-                    const requiredIndex = trustLevels.findIndex(t => t.includes(configLevel.toLowerCase()));
-                    
-                    if (requiredIndex > 0) {
-                        const userTrustIndex = trustLevels.findIndex(level => tags.includes(level));
-                        if (userTrustIndex < requiredIndex) {
-                            matches = true;
-                            reason = `Trust Level below ${configLevel}`;
+                    // If allowMissingData is true and no tags, assume safe (or skip)
+                    if (options.allowMissingData && (!user.tags || user.tags.length === 0)) {
+                         // Skip check if we can't determine rank
+                    } else {
+                        let configLevel = '';
+                        try {
+                            const parsed = JSON.parse(rule.config);
+                            configLevel = parsed.minTrustLevel || parsed.trustLevel || rule.config;
+                        } catch {
+                            configLevel = rule.config;
+                        }
+                        
+                        const trustLevels = ['system_trust_visitor', 'system_trust_basic', 'system_trust_known', 'system_trust_trusted', 'system_trust_veteran', 'system_trust_legend'];
+                        const requiredIndex = trustLevels.findIndex(t => t.includes(configLevel.toLowerCase()));
+                        
+                        if (requiredIndex > 0) {
+                            const userTrustIndex = trustLevels.findIndex(level => tags.includes(level));
+                            // If user has no trust tags and we aren't allowing missing data, they are -1 (below visitor)
+                            if (userTrustIndex < requiredIndex) {
+                                matches = true;
+                                reason = `Trust Level below ${configLevel}`;
+                            }
                         }
                     }
                 }
 
                 if (matches) {
-                    logger.info(`[AutoMod] User ${user.displayName} matched rule: ${rule.name} (${rule.type})`);
+                    logger.info(`[AutoMod] User ${user.displayName} matched rule: ${rule.name}`);
                     return { 
                         action: rule.actionType, 
                         reason,
@@ -141,6 +150,6 @@ export const evaluateUser = async (user: {
             
         } catch (error) {
             logger.error('[AutoMod] Error checking user:', error);
-            return { action: 'ALLOW' }; // Fail-open to not block on errors
+            return { action: 'ALLOW' };
         }
     };

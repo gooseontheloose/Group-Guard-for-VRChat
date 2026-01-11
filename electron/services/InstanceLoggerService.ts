@@ -1,6 +1,7 @@
-import { BrowserWindow, ipcMain } from 'electron';
+import { ipcMain } from 'electron';
 import { logWatcherService } from './LogWatcherService';
 import log from 'electron-log';
+import { windowService } from './WindowService';
 import { databaseService } from './DatabaseService';
 import { groupAuthorizationService } from './GroupAuthorizationService';
 
@@ -78,9 +79,8 @@ class InstanceLoggerService {
       const groupId = groupMatch ? groupMatch[1] : null;
 
       this.currentGroupId = groupId;
-      BrowserWindow.getAllWindows().forEach((w: BrowserWindow) => {
-          w.webContents.send('instance:group-changed', groupId);
-      });
+      this.currentGroupId = groupId;
+      windowService.broadcast('instance:group-changed', groupId);
 
       if (!groupId) {
           logger.info('Skipping non-group instance:', event.location);

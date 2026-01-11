@@ -20,8 +20,8 @@ Unlike simple mods or discord bots, Group Guard is a **standalone external tool*
 Automate your instance security to keep trolls and bad actors out.
 
 - **Rule Engine**: Create custom rules based on Trust Rank, Account Age, Keywords (in Bio/Status), and more.
-- **Actions**: Automatically "Block" (Kick) or "Notify" when a rule is triggered.
-- **Ban Evasion Detection**: (Planned) Heuristics to flag potential ban evaders.
+- **Actions**: Automatically Notify when a rule is triggered.
+
 
 ### 📡 Live Ops Command Center
 
@@ -45,7 +45,7 @@ Direct integration with your VRChat Groups.
 Enhance in-game communication without typing.
 
 - **Announcer**: Automatically send welcome messages to new joins or periodic announcements (e.g., "Join our Discord!").
-- **MagicChatBox Compatible**: Built to work alongside other OSC tools.
+
 
 ## 🚀 Getting Started
 

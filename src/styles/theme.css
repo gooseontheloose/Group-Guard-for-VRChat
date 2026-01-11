@@ -52,6 +52,13 @@
   --color-warning: #f59e0b;
   --color-danger: #ef4444;
   --color-info: #4cc9f0;
+  
+  /* --- TRUST LEVELS --- */
+  --color-trust-trusted: #a855f7;
+  --color-trust-known: #f97316;
+  --color-trust-user: #22c55e;
+  --color-trust-basic: #3b82f6;
+  --color-trust-visitor: #6b7280;
 
   /* --- Z-INDEX REGISTRY --- */
   --z-background: -1;
@@ -62,6 +69,9 @@
   --z-modal: 110;
   --z-tooltip: 500;
   --z-window-controls: 5000;
+  
+  /* --- LAYOUT --- */
+  --dock-height: 90px; /* Height of the dock + margin for content clearance */
 
   /* --- TYPOGRAPHY --- */
   --font-size-xs: 0.75rem;

@@ -3,6 +3,7 @@ import { GlassPanel } from '../../components/ui/GlassPanel';
 import { NeonButton } from '../../components/ui/NeonButton';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ShieldAlert, Users, Radio, Crosshair, UserPlus, ShieldCheck, Activity, Gavel } from 'lucide-react';
+import { AppShieldIcon } from '../../components/ui/AppShieldIcon';
 import { useGroupStore } from '../../stores/groupStore';
 import { useInstanceMonitorStore, type LiveEntity } from '../../stores/instanceMonitorStore';
 import { BanUserDialog } from './dialogs/BanUserDialog';
@@ -100,7 +101,7 @@ const EntityCard: React.FC<{
                     onClick={() => onKick(entity.id, entity.displayName)}
                     title="Kick from Instance"
                 >
-                    <ShieldAlert size={14} />
+                    <AppShieldIcon size={14} />
                 </NeonButton>
             )}
         </div>
@@ -116,6 +117,7 @@ export const LiveView: React.FC = () => {
     const [instanceInfo, setInstanceInfo] = useState<{ name: string; imageUrl?: string; worldId?: string; instanceId?: string } | null>(null);
     const [logs, setLogs] = useState<LogEntry[]>([]);
     const [isLoading, setIsLoading] = useState(false);
+    const [customMessage, setCustomMessage] = useState('');
     
     // Dialog State
     const [banDialogUser, setBanUserDialog] = useState<{ id: string; displayName: string } | null>(null);
@@ -387,7 +389,7 @@ export const LiveView: React.FC = () => {
              let count = 0;
              for (const t of targets) {
                  // 2. Invite Loop
-                 const invRes = await window.electron.instance.inviteToCurrent(t.id ?? '');
+                 const invRes = await window.electron.instance.inviteToCurrent(t.id ?? '', customMessage);
                  
                  if (!invRes.success && invRes.error === 'RATE_LIMIT') {
                     addLog(`[WARN] RATE LIMIT DETECTED! Cooling down for 10s...`, 'warn');
@@ -476,7 +478,7 @@ export const LiveView: React.FC = () => {
                     variant="secondary" 
                     style={{ flex: 1, height: '60px', flexDirection: 'column', gap: '4px', opacity: 0.5 }}
                 >
-                    <ShieldCheck size={20} />
+                    <AppShieldIcon size={20} />
                     <span style={{ fontSize: '0.75rem' }}>GROUP OFF-LINE</span>
                 </NeonButton>
              );
@@ -511,7 +513,7 @@ export const LiveView: React.FC = () => {
                 variant="secondary" 
                 style={{ flex: 1, height: '60px', flexDirection: 'column', gap: '4px' }}
             >
-                <ShieldCheck size={20} />
+                <AppShieldIcon size={20} />
                 <span style={{ fontSize: '0.75rem' }}>INVITE GROUP HERE</span>
             </NeonButton>
         );
@@ -534,7 +536,7 @@ export const LiveView: React.FC = () => {
     };
 
     return (
-        <div style={{ height: '100%', display: 'flex', gap: '1rem', overflow: 'hidden', paddingBottom: '20px' }}>
+        <div style={{ height: '100%', display: 'flex', gap: '1rem', overflow: 'hidden', paddingBottom: 'var(--dock-height)' }}>
             
             {/* COLUMN SET 1: MONITOR (Active & History) */}
             <div style={{ flex: 2, display: 'flex', flexDirection: 'column', gap: '1rem', minWidth: '500px' }}>
@@ -746,6 +748,32 @@ export const LiveView: React.FC = () => {
                         <OscAnnouncementWidget />
                     </div>
 
+                    {/* Custom Invite Message Input */}
+                    {!isRoamingMode && (
+                        <div style={{ marginBottom: '0.5rem' }}>
+                            <input 
+                                type="text" 
+                                placeholder="Custom Invite Message (Optional)..." 
+                                value={customMessage}
+                                onChange={(e) => setCustomMessage(e.target.value)}
+                                style={{
+                                    width: '100%',
+                                    background: 'rgba(0,0,0,0.3)',
+                                    border: '1px solid rgba(255,255,255,0.1)',
+                                    borderRadius: '8px',
+                                    padding: '8px 12px',
+                                    color: 'white',
+                                    fontSize: '0.85rem'
+                                }}
+                            />
+                            {customMessage && (
+                                <div style={{ fontSize: '0.7rem', color: '#fde047', marginTop: '4px', fontStyle: 'italic' }}>
+                                    Warning: Overwrites Invite Slot 12
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     {!isRoamingMode ? (
                         <div style={{ display: 'grid', gap: '10px' }}>
                             <div style={{ display: 'flex', gap: '10px' }}>
@@ -757,7 +785,7 @@ export const LiveView: React.FC = () => {
                                 variant="danger" 
                                 style={{ width: '100%', height: '40px', fontSize: '0.8rem', opacity: 0.8 }}
                              >
-                                 <ShieldAlert size={16} style={{ marginRight: '8px' }} />
+                                 <AppShieldIcon size={16} style={{ marginRight: '8px' }} />
                                  CLOSE INSTANCE
                              </NeonButton>
                         </div>

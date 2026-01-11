@@ -1,11 +1,14 @@
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain } from 'electron';
 import log from 'electron-log';
 const logger = log.scope('InstanceService');
 import { getVRChatClient, getCurrentUserId } from './AuthService';
 import { instanceLoggerService } from './InstanceLoggerService';
+import { windowService } from './WindowService';
 import { logWatcherService } from './LogWatcherService';
 import { groupAuthorizationService } from './GroupAuthorizationService';
 import { evaluateUser } from './AutoModLogic';
+import { networkService } from './NetworkService';
+import { discordWebhookService } from './DiscordWebhookService';
 
 
 // ============================================
@@ -145,10 +148,9 @@ async function processFetchQueue(groupId?: string) {
                 
                 // Emit update to UI
                 // We send the single entity update to let UI merge it
-                const windows = BrowserWindow.getAllWindows();
-                for (const win of windows) {
-                    win.webContents.send('instance:entity-update', entity);
-                }
+                // Emit update to UI
+                // We send the single entity update to let UI merge it
+                windowService.broadcast('instance:entity-update', entity);
 
             } catch (err) {
                 logger.warn(`[InstanceService] Failed to fetch data for ${userId}`, err);
@@ -248,125 +250,128 @@ export function setupInstanceHandlers() {
         }
     });
 
+    // HELPER: Send Invite with Custom Message Support
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const sendCustomInvite = async (client: any, userId: string, location: string, message?: string) => {
+        // Slot 11 = Slot 12 in UI (0-indexed)
+        const SLOT_INDEX = 11; 
+
+        if (message) {
+            try {
+                // 1. Overwrite Slot
+                logger.info(`[InstanceService] Overwriting Invite Slot ${SLOT_INDEX} with: "${message}"`);
+                await client.updateInviteMessage({
+                    path: { slot: SLOT_INDEX },
+                    body: { message: message.substring(0, 64) } // API limit 64 chars
+                });
+                
+                // Short safety delay to ensure propagation?
+                await sleep(200);
+
+            } catch (e: any) {
+                logger.warn(`[InstanceService] Failed to update invite message slot: ${e.message}. Sending standard invite.`);
+                // Proceed with standard invite if slot update fails? 
+                // Alternatively, throw error. Let's proceed but log it.
+            }
+        }
+
+        // 2. Send Invite
+        // If message was set, use the slot. Otherwise, use standard invite (no slot = default? or just no message)
+        const body: any = { instanceId: location };
+        if (message) {
+            body.messageSlot = SLOT_INDEX;
+        }
+
+        return await client.inviteUser({ 
+            path: { userId },
+            body: body
+        });
+    };
+
     // RECRUIT (Invite User to Group)
-    ipcMain.handle('instance:recruit-user', async (_event, { groupId, userId }) => {
+    ipcMain.handle('instance:recruit-user', async (_event, { groupId, userId, message }: { groupId: string, userId: string, message?: string }) => {
         // SECURITY: Validate group access
         const authCheck = groupAuthorizationService.validateAccessSafe(groupId, 'instance:recruit-user');
-        if (!authCheck.allowed) {
-            return { success: false, error: authCheck.error };
-        }
+        if (!authCheck.allowed) return { success: false, error: authCheck.error };
         
         const client = getVRChatClient();
-        if (!client) throw new Error("Not authenticated");
+        if (!client) return { success: false, error: "Not authenticated" };
 
         // Resolve current instance for cache key
         const currentWorldId = instanceLoggerService.getCurrentWorldId();
         const currentInstanceId = instanceLoggerService.getCurrentInstanceId();
-        
-        // If we can't determine instance, we use a global fallback for this session to be safe
         const fullInstanceKey = currentWorldId && currentInstanceId ? `${currentWorldId}:${currentInstanceId}` : 'global_session_fallback';
 
-        // Check if already invited in this session/instance
         if (recruitmentCache.has(fullInstanceKey) && recruitmentCache.get(fullInstanceKey)!.has(userId)) {
-            logger.info(`[InstanceService] CACHE HIT: Skipping recruit for ${userId} (Key: ${fullInstanceKey})`);
+            logger.info(`[InstanceService] CACHE HIT: Skipping recruit for ${userId}`);
             return { success: true, cached: true };
         }
 
-        try {
+        return networkService.execute(async () => {
            logger.info(`[InstanceService] Inviting ${userId} to group ${groupId}...`);
-           
-           // Correct API method for 'Invite User to Group' is createGroupInvite (POST /groups/:groupId/invites)
-           // Requires 'userId' in the body.
            // eslint-disable-next-line @typescript-eslint/no-explicit-any
            const result = await (client as any).createGroupInvite({ 
                path: { groupId },
                body: { userId }
            });
            
-           logger.info(`[InstanceService] createGroupInvite Raw Result for ${userId}:`, JSON.stringify(result, null, 2));
+           if (result.error) throw result.error; // Will be caught by execute
 
-           // Check for SDK error pattern
-           if (result.error) {
-               const errorMsg = result.error?.message || JSON.stringify(result.error);
-               logger.error(`[InstanceService] API error inviting ${userId}: ${errorMsg}`);
-               return { success: false, error: errorMsg };
-           }
-           
-           logger.info(`[InstanceService] Recruitment success for ${userId}`);
-           
            // Add to cache
-           if (!recruitmentCache.has(fullInstanceKey)) {
-               recruitmentCache.set(fullInstanceKey, new Set());
-           }
+           if (!recruitmentCache.has(fullInstanceKey)) recruitmentCache.set(fullInstanceKey, new Set());
            recruitmentCache.get(fullInstanceKey)!.add(userId);
 
            return { success: true };
-        } catch (e: unknown) {
-            const err = e as VRChatApiError;
-            logger.error(`[InstanceService] Exception inviting ${userId}:`, e);
-            
-            // Check for rate limit
-            if (err.response && err.response.status === 429) {
-                 logger.warn(`[InstanceService] Rate limited (429) recruiting ${userId}`);
-                 return { success: false, error: 'RATE_LIMIT' }; // Frontend can handle this specifically
-            }
-
-            // If user is already in group or invited, API throws.
-            const msg = err.response?.data?.error?.message || err.message;
-            logger.warn(`[InstanceService] Failed to recruit ${userId}: ${msg}`);
-            return { success: false, error: msg };
-        }
+        }, `instance:recruit-user:${userId}`).then(res => {
+             // Map specific errors if needed
+             if (res.error === 'Rate Limited') return { success: false, error: 'RATE_LIMIT' }; 
+             if (res.success) return { success: true };
+             return { success: false, error: res.error };
+        });
     });
     
     // UNBAN (Unban User from Group)
     ipcMain.handle('instance:unban-user', async (_event, { groupId, userId }) => {
         // SECURITY: Validate group access
         const authCheck = groupAuthorizationService.validateAccessSafe(groupId, 'instance:unban-user');
-        if (!authCheck.allowed) {
-            return { success: false, error: authCheck.error };
-        }
+        if (!authCheck.allowed) return { success: false, error: authCheck.error };
         
         const client = getVRChatClient();
-        if (!client) throw new Error("Not authenticated");
+        if (!client) return { success: false, error: "Not authenticated" };
 
-        try {
+        return networkService.execute(async () => {
            logger.info(`[InstanceService] Unbanning ${userId} from group ${groupId}...`);
-           
-           // API: DELETE /groups/{groupId}/bans/{userId}
            // eslint-disable-next-line @typescript-eslint/no-explicit-any
            const result = await (client as any).unbanGroupMember({ 
                path: { groupId, userId }
            });
-           
-           // Check for SDK error pattern
-           if (result.error) {
-               const errorMsg = result.error?.message || JSON.stringify(result.error);
-               logger.error(`[InstanceService] API error unbanning ${userId}: ${errorMsg}`);
-               return { success: false, error: errorMsg };
-           }
-           
-           logger.info(`[InstanceService] Unban successful for ${userId}`);
+           if (result.error) throw result.error;
+
+           // WEBHOOK
+           discordWebhookService.sendEvent(
+               groupId,
+               '🔓 Member Unbanned',
+               `**User**: ${userId}\n**Unbanned By**: ${getCurrentUserId() || 'Unknown'}`,
+               0x57F287 
+           );
+
            return { success: true };
-        } catch (e: unknown) {
-            const err = e as VRChatApiError;
-            const msg = err.response?.data?.error?.message || err.message;
-            logger.warn(`[InstanceService] Failed to unban ${userId}: ${msg}`);
-            return { success: false, error: msg };
-        }
+        }, `instance:unban-user:${userId}`).then(res => {
+            if (res.success) return { success: true };
+            return { success: false, error: res.error };
+        });
     });
 
     // KICK (Ban from Group)
     ipcMain.handle('instance:kick-user', async (_event, { groupId, userId }) => {
         // SECURITY: Validate group access
         const authCheck = groupAuthorizationService.validateAccessSafe(groupId, 'instance:kick-user');
-        if (!authCheck.allowed) {
-            return { success: false, error: authCheck.error };
-        }
+        if (!authCheck.allowed) return { success: false, error: authCheck.error };
         
         const client = getVRChatClient();
-        if (!client) throw new Error("Not authenticated");
+        if (!client) return { success: false, error: "Not authenticated" };
 
-        try {
+        return networkService.execute(async () => {
            logger.info(`[InstanceService] Kicking ${userId} from group ${groupId} (Ban + Unban sequence)`);
            
            // 1. BAN (Remove from group)
@@ -376,11 +381,7 @@ export function setupInstanceHandlers() {
                body: { userId }
            });
            
-           if (banResult.error) {
-               const errorMsg = banResult.error?.message || JSON.stringify(banResult.error);
-               logger.error(`[InstanceService] Kick failed at Ban stage for ${userId}: ${errorMsg}`, { payload: { groupId, userId } });
-               return { success: false, error: `Kick failed (Ban stage): ${errorMsg}` };
-           }
+           if (banResult.error) throw new Error(`Kick failed (Ban stage): ${(banResult.error as any).message}`);
 
            // 2. WAIT (Short delay to ensure consistency)
            await new Promise(r => setTimeout(r, 500));
@@ -388,51 +389,46 @@ export function setupInstanceHandlers() {
            // 3. UNBAN (Clear the ban so they can rejoin if they want, effective 'Kick')
            try {
                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-               await (client as any).unbanGroupMember({ 
-                   path: { groupId, userId }
-               });
+               await (client as any).unbanGroupMember({ path: { groupId, userId } });
                logger.info(`[InstanceService] Unban complete for ${userId} (Kick sequence finished)`);
            } catch (e) {
-               logger.warn(`[InstanceService] Failed to cleanup ban for ${userId} during kick sequence. User remains banned.`, e);
-               // We still return success because they ARE removed from the group, which was the goal.
-               // But we log it.
+               logger.warn(`[InstanceService] Failed to cleanup ban for ${userId} during kick. User remains banned.`, e);
            }
+           
+           
+           // WEBHOOK
+           discordWebhookService.sendEvent(
+               groupId,
+               '🥾 User Kicked',
+               `**User**: ${userId}\n**Action**: Soft Kick (Ban+Unban)\n**Instance**: ${instanceLoggerService.getCurrentInstanceId() || 'Unknown'}`,
+               0xFEE75C
+           );
 
            return { success: true };
-        } catch (e: unknown) {
-            const err = e as VRChatApiError;
-            logger.error(`[InstanceService] Failed to kick ${userId}`, e);
-            return { success: false, error: err.message };
-        }
+        }, `instance:kick-user:${userId}`).then(res => {
+            if (res.success) return { success: true };
+            return { success: false, error: res.error };
+        });
     });
 
     // RALLY: FETCH TARGETS
     ipcMain.handle('instance:get-rally-targets', async (_event, { groupId }) => {
         // SECURITY: Validate group access
         const authCheck = groupAuthorizationService.validateAccessSafe(groupId, 'instance:get-rally-targets');
-        if (!authCheck.allowed) {
-            return { success: false, error: authCheck.error };
-        }
+        if (!authCheck.allowed) return { success: false, error: authCheck.error };
         
         const client = getVRChatClient();
-        if (!client) throw new Error("Not authenticated");
+        if (!client) return { success: false, error: "Not authenticated" };
         
-        try {
-            // Get recent 50 members
-            // We can't easily filter by "online" via standard API efficiently without checking each.
-            // So we'll just fetch the most recent members (likely active).
-            // Or maybe 'last_login' sort if available? 'joinedAt' is safest.
+        return networkService.execute(async () => {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const memRes = await (client as any).getGroupMembers({ 
                 path: { groupId },
                 query: { n: 50, offset: 0, sort: 'joinedAt:desc' } 
             });
-            
             const members = memRes.data || [];
             const currentUserId = getCurrentUserId();
             
-            // Map to frontend friendly format
-            // Map to frontend friendly format
             const targets = members
                 .map((m: GroupMemberApiResponse) => ({
                     id: m.user?.id,
@@ -440,41 +436,35 @@ export function setupInstanceHandlers() {
                     thumbnailUrl: m.user?.thumbnailUrl
                 }))
                 .filter((t: { id?: string; displayName?: string }) => {
-                     // 1. Allow self (User requested to receive notification/invite too)
+                     // 1. Allow self
                      if (!t.id) return false;
                      if (t.id === currentUserId) return true;
-
-                     // 2. Exclude users already here (from LogWatcher)
+                     // 2. Exclude users already here
                      const players = logWatcherService.getPlayers();
                      const isHere = players.some(p => 
                         (p.userId && p.userId === t.id) || 
                         (p.displayName && p.displayName === t.displayName)
                      );
-                     
                      return !isHere;
                 });
-
-            return { success: true, targets };
-        } catch (e: unknown) {
-             const err = e as VRChatApiError;
-             logger.error(`[InstanceService] Failed to fetch rally targets`, e);
-             return { success: false, error: err.message };
-        }
+            return { targets };
+        }, `instance:get-rally-targets:${groupId}`).then(res => {
+            if (res.success) return { success: true, targets: res.data?.targets };
+            return { success: false, error: res.error };
+        });
     });
 
     // RALLY: INVITE SINGLE USER TO CURRENT INSTANCE
-    ipcMain.handle('instance:invite-to-current', async (_event, { userId }) => {
+    ipcMain.handle('instance:invite-to-current', async (_event, { userId, message }: { userId: string, message?: string }) => {
          const client = getVRChatClient();
-         if (!client) throw new Error("Not authenticated");
+         if (!client) return { success: false, error: "Not authenticated" };
 
-         try {
+         return networkService.execute(async () => {
              // Resolve current instance
              const worldId = instanceLoggerService.getCurrentWorldId();
              const instanceId = instanceLoggerService.getCurrentInstanceId();
              
-             if (!worldId || !instanceId) {
-                 return { success: false, error: "No active instance" };
-             }
+             if (!worldId || !instanceId) throw new Error("No active instance");
              
              // Resolve cache key
              const fullInstanceKey = `${worldId}:${instanceId}`;
@@ -485,34 +475,30 @@ export function setupInstanceHandlers() {
                  return { success: true, cached: true };
              }
               
-              const fullId = `${worldId}:${instanceId}`;
+             const fullId = `${worldId}:${instanceId}`;
 
-             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-             await (client as any).inviteUser({ 
-                 path: { userId },
-                 body: { instanceId: fullId }
-             });
+             // Use Custom Invite Helper
+             await sendCustomInvite(client, userId, fullId, message);
              
              // Update cache
-             if (!recruitmentCache.has(fullInstanceKey)) {
-                 recruitmentCache.set(fullInstanceKey, new Set());
-             }
+             if (!recruitmentCache.has(fullInstanceKey)) recruitmentCache.set(fullInstanceKey, new Set());
              recruitmentCache.get(fullInstanceKey)!.add(userId);
 
              return { success: true };
-         } catch (e: unknown) {
-             const err = e as VRChatApiError;
-             // Rate Limit Check
-             if (err.response && err.response.status === 429) {
-                 return { success: false, error: 'RATE_LIMIT' };
+         }, `instance:invite-to-current:${userId}`).then(res => {
+             if (res.error === 'Rate Limited') return { success: false, error: 'RATE_LIMIT' };
+             if (res.success) {
+                 // Check if it returned a cached result
+                 if (res.data && (res.data as any).cached) return { success: true, cached: true };
+                 return { success: true };
              }
-             const msg = err.response?.data?.error?.message || err.message;
-             return { success: false, error: msg };
-         }
+             return { success: false, error: res.error };
+         });
     });
 
+
     // RALLY FROM PREVIOUS SESSION: Get users from a session file and invite them
-    ipcMain.handle('instance:rally-from-session', async (_event, { filename }) => {
+    ipcMain.handle('instance:rally-from-session', async (_event, { filename, message }: { filename: string, message?: string }) => {
          const client = getVRChatClient();
          if (!client) throw new Error("Not authenticated");
 
@@ -563,11 +549,7 @@ export function setupInstanceHandlers() {
              
              // Helper to emit progress to all windows
              const emitProgress = (data: { sent: number; skipped: number; failed: number; total: number; current?: string; done?: boolean }) => {
-                 BrowserWindow.getAllWindows().forEach(win => {
-                     if (!win.isDestroyed()) {
-                         win.webContents.send('rally:progress', data);
-                     }
-                 });
+                 windowService.broadcast('rally:progress', data);
              };
              
              // 5. Send invites with rate limit awareness
@@ -583,11 +565,9 @@ export function setupInstanceHandlers() {
                  try {
                      logger.info(`[InstanceService] Sending invite to ${userId}...`);
                      
-                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                     await (client as any).inviteUser({ 
-                         path: { userId },
-                         body: { instanceId: currentLocation }
-                     });
+                     // Use Custom Invite Helper
+                     await sendCustomInvite(client, userId, currentLocation, message);
+
                      successCount++;
                      logger.info(`[InstanceService] ✓ Invite sent to ${userId} (${successCount}/${total})`);
                      
@@ -632,7 +612,7 @@ export function setupInstanceHandlers() {
     });
 
     // MASS INVITE FRIENDS
-    ipcMain.handle('instance:mass-invite-friends', async (_event, options: { filterAutoMod?: boolean; delayMs?: number }) => {
+    ipcMain.handle('instance:mass-invite-friends', async (_event, options: { filterAutoMod?: boolean; delayMs?: number; message?: string }) => {
         const client = getVRChatClient();
         if (!client) throw new Error("Not authenticated");
 
@@ -660,38 +640,89 @@ export function setupInstanceHandlers() {
             logger.info(`[InstanceService] Fetching friend list...`);
             
             while (hasMore && allFriends.length < MAX_FRIENDS) {
-                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                 const res = await (client as any).getFriends({ 
-                    query: { n: 100, offset, offline: false } // offline: false = only online/active
-                 });
-                 const friends = res.data || [];
-                 if (friends.length === 0) {
-                     hasMore = false;
-                 } else {
-                     allFriends.push(...friends);
-                     offset += friends.length;
-                     if (friends.length < 100) hasMore = false;
-                     await sleep(500); // polite api usage
-                 }
+                try {
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    const res = await (client as any).getFriends({ 
+                        query: { n: 100, offset } // Fetch ALL friends, we'll filter by status later
+                    });
+                    
+                    // Log raw response type and structure for debugging
+                    logger.info(`[InstanceService] getFriends raw response type: ${typeof res}`);
+                    if (res) {
+                        logger.info(`[InstanceService] getFriends response keys: ${JSON.stringify(Object.keys(res))}`);
+                    }
+                    
+                    // Handle different response formats
+                    let friends = [];
+                    if (Array.isArray(res)) {
+                        friends = res;
+                        logger.info(`[InstanceService] Response is direct array`);
+                    } else if (res?.data && Array.isArray(res.data)) {
+                        friends = res.data;
+                        logger.info(`[InstanceService] Response has .data array`);
+                    } else if (res?.response?.data && Array.isArray(res.response.data)) {
+                        friends = res.response.data;
+                        logger.info(`[InstanceService] Response has .response.data array`);
+                    } else {
+                        // Try to find the array somewhere in the response
+                        logger.warn(`[InstanceService] Unexpected response format. Trying to parse...`);
+                        logger.info(`[InstanceService] Raw response: ${JSON.stringify(res).substring(0, 500)}`);
+                        
+                        // Maybe it's in a 'friends' property?
+                        if (res?.friends && Array.isArray(res.friends)) {
+                            friends = res.friends;
+                        }
+                    }
+                    
+                    logger.info(`[InstanceService] getFriends batch: offset=${offset}, got ${friends.length} friends`);
+                    
+                    if (friends.length === 0) {
+                        hasMore = false;
+                    } else {
+                        allFriends.push(...friends);
+                        offset += friends.length;
+                        if (friends.length < 100) hasMore = false;
+                        await sleep(500); // polite api usage
+                    }
+                } catch (fetchErr) {
+                    logger.error(`[InstanceService] Error fetching friends at offset ${offset}:`, fetchErr);
+                    hasMore = false; // Stop on error
+                }
             }
 
-            logger.info(`[InstanceService] Found ${allFriends.length} online friends`);
+            logger.info(`[InstanceService] Total friends fetched: ${allFriends.length}`);
+            
+            // Debug: Log first friend structure to understand the data
+            if (allFriends.length > 0) {
+                logger.info(`[InstanceService] Sample friend structure: ${JSON.stringify(Object.keys(allFriends[0]))}`);
+                logger.info(`[InstanceService] Sample friend location: ${allFriends[0].location}, status: ${allFriends[0].status}`);
+            }
 
              // 3. Filter targets
              const currentPlayers = logWatcherService.getPlayers();
              const currentUserId = getCurrentUserId();
              
-             // Pre-filter: online, not me, not already here
-             let targets = allFriends.filter(f => 
-                  f.id !== currentUserId && 
-                  f.location !== 'offline' && // Double check
-                  !currentPlayers.some(p => p.userId === f.id)
-             );
+             logger.info(`[InstanceService] Current user ID: ${currentUserId}, Players in instance: ${currentPlayers.length}`);
+             
+             // Pre-filter: not me, online (location !== 'offline' and location !== 'private'), not already here
+             let targets = allFriends.filter(f => {
+                  const isMe = f.id === currentUserId;
+                  const isOffline = !f.location || f.location === 'offline';
+                  const isPrivate = f.location === 'private';
+                  const isAlreadyHere = currentPlayers.some(p => p.userId === f.id);
+                  
+                  // Include friends who are online and not in a private/offline state
+                  return !isMe && !isOffline && !isPrivate && !isAlreadyHere;
+             });
+             
+             logger.info(`[InstanceService] After online/location filter: ${targets.length} friends`);
 
              // Filter already invited in session
              if (recruitmentCache.has(currentLocation)) {
                  const invitedSet = recruitmentCache.get(currentLocation)!;
+                 const beforeCount = targets.length;
                  targets = targets.filter(f => !invitedSet.has(f.id));
+                 logger.info(`[InstanceService] Filtered ${beforeCount - targets.length} already invited friends`);
              }
 
              logger.info(`[InstanceService] Candidates after basic filtering: ${targets.length}`);
@@ -713,7 +744,7 @@ export function setupInstanceHandlers() {
                           tags: friend.tags,
                           ageVerificationStatus: friend.ageVerificationStatus
                           // pronouns not in standard friend obj?
-                      });
+                      }, { allowMissingData: true }); // Use lenient mode for mass invite (API limits)
                       
                       if (evaluation.action === 'ALLOW') {
                           finalTargets.push(friend);
@@ -732,11 +763,7 @@ export function setupInstanceHandlers() {
 
              // 5. Send Invites
              const emitProgress = (data: { sent: number; skipped: number; failed: number; total: number; current?: string; done?: boolean }) => {
-                BrowserWindow.getAllWindows().forEach(win => {
-                    if (!win.isDestroyed()) {
-                        win.webContents.send('mass-invite:progress', data);
-                    }
-                });
+                windowService.broadcast('mass-invite:progress', data);
             };
 
             let successCount = 0;
@@ -756,11 +783,8 @@ export function setupInstanceHandlers() {
 
                      logger.info(`[InstanceService] Inviting friend ${friend.displayName} (${friend.id})...`);
                      
-                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                     await (client as any).inviteUser({ 
-                         path: { userId: friend.id },
-                         body: { instanceId: currentLocation }
-                     });
+                     // Use Custom Invite Helper
+                     await sendCustomInvite(client, friend.id, currentLocation, options.message);
                      
                      successCount++;
                      
@@ -769,13 +793,14 @@ export function setupInstanceHandlers() {
                         recruitmentCache.set(currentLocation, new Set());
                      }
                      recruitmentCache.get(currentLocation)!.add(friend.id);
-
+                     
+                     // Emit progress
                      emitProgress({ sent: successCount, skipped: skippedCount, failed: failCount, total, current: friend.displayName });
                      
                      await sleep(delayMs);
 
-                 } catch (inviteErr: unknown) {
-                     const err = inviteErr as VRChatApiError;
+                 } catch (e: unknown) {
+                     const err = e as VRChatApiError;
                      failCount++;
                      const errMsg = err.response?.data?.error?.message || err.message;
                      logger.warn(`[InstanceService] Failed to invite ${friend.displayName}: ${errMsg}`);
@@ -809,9 +834,9 @@ export function setupInstanceHandlers() {
     // CLOSE INSTANCE - Using SDK closeInstance method
     ipcMain.handle('instance:close-instance', async (_event, args?: { worldId?: string; instanceId?: string }) => {
          const client = getVRChatClient();
-         if (!client) throw new Error("Not authenticated");
+         if (!client) return { success: false, error: "Not authenticated" };
 
-         try {
+         return networkService.execute(async () => {
              // Resolve instance to close: provided args or current
              let worldId = args?.worldId;
              let instanceId = args?.instanceId;
@@ -821,9 +846,7 @@ export function setupInstanceHandlers() {
                  instanceId = instanceLoggerService.getCurrentInstanceId() || undefined;
              }
              
-             if (!worldId || !instanceId) {
-                 return { success: false, error: "No active instance to close and none specified" };
-             }
+             if (!worldId || !instanceId) throw new Error("No active instance to close and none specified");
 
              logger.warn(`[InstanceService] Closing instance - worldId: ${worldId}, instanceId: ${instanceId}`);
              
@@ -833,57 +856,38 @@ export function setupInstanceHandlers() {
                  query: { hardClose: true }
              });
              
-             // Safe stringify helper for BigInt
              const safeStringify = (obj: unknown) => JSON.stringify(obj, (_k, v) => typeof v === 'bigint' ? v.toString() : v, 2);
-             
              logger.info(`[InstanceService] closeInstance raw response:`, safeStringify(response));
              
-             // Check for SDK error pattern
-             if (response?.error) {
-                 const errorMsg = response.error?.message || safeStringify(response.error);
-                 logger.error(`[InstanceService] API returned error:`, errorMsg);
-                 return { success: false, error: errorMsg };
-             }
+             if (response?.error) throw new Error(response.error.message || safeStringify(response.error));
              
              logger.info(`[InstanceService] Instance closed successfully.`);
-             
-             // Clear the invite cache for this instance since it's now dead
              clearRecruitmentCache(`${worldId}:${instanceId}`);
              
              return { success: true };
-             
-         } catch (e: unknown) {
-             const err = e as VRChatApiError & { name?: string; stack?: string };
-             logger.error(`[InstanceService] Exception closing instance:`, e);
-             const msg = err.response?.data?.error?.message || err.message || 'Unknown error';
-             return { success: false, error: msg };
-         }
+         }, `instance:close-instance`).then(res => {
+             if (res.success) return { success: true };
+             return { success: false, error: res.error };
+         });
     });
 
     // INVITE SELF (Join Instance)
     ipcMain.handle('instance:invite-self', async (_event, { worldId, instanceId }: { worldId: string, instanceId: string }) => {
         const client = getVRChatClient();
-        if (!client) throw new Error("Not authenticated");
+        if (!client) return { success: false, error: "Not authenticated" };
 
-        try {
+        return networkService.execute(async () => {
             logger.info(`[InstanceService] Inviting self to ${worldId}:${instanceId}`);
-            
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const result = await (client as any).inviteMyselfTo({ 
                 path: { worldId, instanceId }
             });
-
-            if (result.error) {
-                const errorMsg = result.error?.message || JSON.stringify(result.error);
-                return { success: false, error: errorMsg };
-            }
-
+            if (result.error) throw result.error;
             return { success: true };
-        } catch (e: unknown) {
-             const err = e as VRChatApiError;
-             const msg = err.response?.data?.error?.message || err.message;
-             return { success: false, error: msg };
-        }
+        }, `instance:invite-self:${worldId}:${instanceId}`).then(res => {
+            if (res.success) return { success: true };
+            return { success: false, error: res.error };
+        });
     });
 
     // GET INSTANCE INFO (World Name, Image)
@@ -898,21 +902,25 @@ export function setupInstanceHandlers() {
          let imageUrl = null;
          let apiName = null;
          
-          const client = getVRChatClient();
-          if (client) {
-              try {
+         const client = getVRChatClient();
+         if (client) {
+              const res = await networkService.execute(async () => {
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
                   const wRes = await (client as any).getWorld({ path: { worldId } });
-                  imageUrl = wRes.data?.thumbnailImageUrl || wRes.data?.imageUrl;
-                  apiName = wRes.data?.name;
-                  // ignore API fail, fallback to log name
-                  // If fetching world info fails, it MIGHT be because we aren't online or instance is weird.
-                  // But checking instance status specifically via 'getInstance' (which we don't have separate here) is better.
-                  // However, let's look at invite logic. If the user invokes 'close instance', we know it's gone.
-              } catch {
-                  // ignore API fail, fallback to log name
+                  return {
+                      imageUrl: wRes.data?.thumbnailImageUrl || wRes.data?.imageUrl,
+                      name: wRes.data?.name
+                  };
+              }, `instance:get-instance-info:${worldId}`);
+              
+              if (res.success && res.data) {
+                  imageUrl = res.data.imageUrl;
+                  apiName = res.data.name;
+              } else {
+                   // Fallback used (or error ignored), just log if needed
+                   logger.warn(`[InstanceService] Failed to fetch world info via API: ${res.error}`);
               }
-          }
+         }
 
          return { 
              success: true, 

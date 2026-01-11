@@ -2,12 +2,14 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  gap: 0.75rem; /* Reduced from 1.5rem */
+  gap: 0;
+  padding-bottom: 0;
+  overflow: hidden;
 }
 
 .headerPanel {
   flex: 0 0 auto;
-  padding: 0.75rem 1rem; /* Reduced padding */
+  padding: 0.75rem 1rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -16,18 +18,18 @@
 }
 
 .titleSection {
-  min-width: 150px; /* Reduced from 200px */
+  min-width: 150px;
 }
 
 .title {
-  font-size: 1.5rem; /* Reduced from 1.8rem */
+  font-size: 1.5rem;
   margin: 0;
   font-weight: 800;
   line-height: 1.2;
 }
 
 .subtitle {
-  font-size: 0.7rem; /* Reduced from 0.8rem */
+  font-size: 0.7rem;
   color: var(--color-text-dim);
   margin-top: 2px;
   letter-spacing: 0.05em;
@@ -35,188 +37,8 @@
 
 .statsGrid {
   display: flex;
-  gap: 0.5rem; /* Reduced from 1rem */
+  gap: 0.5rem;
   flex: 1;
   justify-content: flex-end;
   flex-wrap: wrap;
-}
-
-.contentGrid {
-  flex: 1;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px; /* Monitor Wide, Audit Narrow */
-  gap: 0.75rem;
-  min-height: 0;
-}
-
-/* Only stack on very narrow screens */
-@media (max-width: 850px) {
-  .contentGrid {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(300px, 1fr) minmax(300px, 1fr);
-  }
-}
-
-.auditPanel {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  height: 100%;
-}
-
-.auditHeader {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 0.5rem;
-  flex: 0 0 auto;
-  padding-bottom: 0.5rem;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.auditTitle {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-
-.auditTitle h3 {
-  margin: 0;
-  font-size: 0.85rem;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-}
-
-.liveIndicator {
-  width: 5px;
-  height: 5px;
-  border-radius: 50%;
-  background: var(--color-success);
-  box-shadow: 0 0 5px var(--color-success);
-}
-
-
-/* Audit Tabs removed in favor of Filter Dropdown */
-
-
-.logList {
-  flex: 1;
-  overflow-y: auto;
-  padding-right: 2px;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.emptyState {
-  text-align: center;
-  padding: 1.5rem;
-  color: var(--color-text-dim);
-  font-size: 0.8rem;
-  font-style: italic;
-}
-
-.logItem {
-  padding: 4px 6px;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.75rem;
-  transition: background 0.1s;
-  white-space: nowrap;
-}
-
-.logItem:hover {
-  background: rgba(255, 255, 255, 0.05);
-}
-
-.logDot {
-  width: 4px;
-  height: 4px;
-  flex: 0 0 auto;
-  border-radius: 50%;
-}
-
-@keyframes marquee {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(calc(-100% + 100%)); } /* Adjust this logic */
-}
-
-/* 
-   Better Marquee Logic:
-   1. The container (logContent) has overflow hidden.
-   2. The inner wrapper (scrollWrapper) contains the text.
-   3. On hover, if the text is longer, we translate it.
-   
-   Actually, a simple way to "scroll automatically" without JS calculating width is using a specialized marquee animation where we duplicate content or just scroll far enough.
-   Since we can't duplicate content easily in CSS only for a list, let's just do a simple "transform translate" on hover.
-*/
-
-.logContent {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  overflow: hidden;
-  mask-image: linear-gradient(to right, black 90%, transparent 100%);
-  position: relative;
-}
-
-.scrollWrapper {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-  /* Start positioned normally */
-  transform: translateX(0);
-  transition: transform 0s; /* Instant reset */
-}
-
-/* On hover, we animate the wrapper to slide to the left */
-.logContent:hover .scrollWrapper {
-  /* 
-     We don't know the exact width, so percentages are tricky.
-     But typically "scrolling for visibility" implies moving it so the end is visible.
-     
-     Let's use a keyframe that moves it leftward.
-     -100% would move it completely out. 
-     We likely want to move it to roughly allow reading. 
-  */
-  animation: smoothScroll 8s linear infinite alternate;
-  animation-delay: 0.5s;
-}
-
-@keyframes smoothScroll {
-  0% { transform: translateX(0); }
-  100% { transform: translateX(-50%); } 
-}
-
-.actorName {
-  font-weight: 700;
-  color: var(--color-primary);
-  font-size: 0.75rem;
-  cursor: pointer;
-}
-
-.timestamp {
-  font-size: 0.65rem;
-  color: var(--color-text-dim);
-  font-family: monospace;
-  opacity: 0.7;
-}
-
-.logDescription {
-  color: rgba(255, 255, 255, 0.8);
-  font-size: 0.75rem;
-  white-space: nowrap;
-}
-
-.monitorColumn {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  gap: 0.5rem;
-  overflow: hidden;
 }

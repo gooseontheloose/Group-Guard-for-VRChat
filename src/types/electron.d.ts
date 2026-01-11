@@ -96,6 +96,15 @@ export interface GroupsResult {
   error?: string;
 }
 
+export interface DiscordRpcConfig {
+  enabled: boolean;
+  showGroupName: boolean;
+  showMemberCount: boolean;
+  showElapsedTime: boolean;
+  customDetails: string;
+  customState: string;
+}
+
 export interface AuditLogsResult {
   success: boolean;
   logs?: unknown[];
@@ -294,6 +303,7 @@ export interface ElectronAPI {
   getGroupBans: (groupId: string) => Promise<{ success: boolean; bans?: GroupBan[]; error?: string }>;
   getGroupInstances: (groupId: string) => Promise<{ success: boolean; instances?: VRChatInstance[]; error?: string }>;
   banUser: (groupId: string, userId: string) => Promise<{ success: boolean; error?: string }>;
+  unbanUser: (groupId: string, userId: string) => Promise<{ success: boolean; error?: string }>;
 
   // Role Management
   getGroupRoles: (groupId: string) => Promise<{ success: boolean; roles?: unknown[]; error?: string }>;
@@ -357,21 +367,29 @@ export interface ElectronAPI {
       setPath: (path: string) => Promise<boolean>;
   };
 
+  // UI Layout Store (for dashboard layout persistence)
+  uiLayout: {
+      get: (key: string) => Promise<unknown>;
+      set: (key: string, value: unknown) => Promise<void>;
+      delete: (key: string) => Promise<void>;
+      has: (key: string) => Promise<boolean>;
+  };
+
   // Instance Presence API
   instance: {
-      // NEW LIVE OPS API
-      scanSector: (groupId: string) => Promise<LiveEntity[]>;
-      recruitUser: (groupId: string, userId: string) => Promise<{ success: boolean; error?: string }>;
-      unbanUser: (groupId: string, userId: string) => Promise<{ success: boolean; error?: string }>;
-      kickUser: (groupId: string, userId: string) => Promise<{ success: boolean; error?: string }>;
-      // rallyForces: (groupId: string) => Promise<{ success: boolean; count?: number; error?: string }>;
-      getRallyTargets: (groupId: string) => Promise<{ success: boolean; targets?: RallyTarget[]; error?: string }>;
-      inviteToCurrent: (userId: string) => Promise<{ success: boolean; error?: string }>;
+    // Instance
+    scanSector: (groupId?: string) => Promise<LiveEntity[]>;
+    recruitUser: (groupId: string, userId: string, message?: string) => Promise<{ success: boolean; error?: string; cached?: boolean }>;
+    unbanUser: (groupId: string, userId: string) => Promise<{ success: boolean; error?: string }>;
+    kickUser: (groupId: string, userId: string) => Promise<{ success: boolean; error?: string }>;
+    getRallyTargets: (groupId: string) => Promise<{ success: boolean; targets?: { id: string; displayName: string; thumbnailUrl: string }[]; error?: string }>;
+    inviteToCurrent: (userId: string, message?: string) => Promise<{ success: boolean; error?: string; cached?: boolean }>;
+    rallyFromSession: (filename: string, message?: string) => Promise<{ success: boolean; invited?: number; failed?: number; total?: number; error?: string; errors?: string[] }>;
+    massInviteFriends: (options: { filterAutoMod?: boolean; delayMs?: number; message?: string }) => Promise<{ success: boolean; invited?: number; skipped?: number; failed?: number; total?: number; error?: string }>;
       closeInstance: (worldId?: string, instanceId?: string) => Promise<{ success: boolean; error?: string }>;
       inviteSelf: (worldId: string, instanceId: string) => Promise<{ success: boolean; error?: string }>;
       getInstanceInfo: () => Promise<{ success: boolean; worldId?: string; instanceId?: string; name?: string; imageUrl?: string; error?: string }>;
       onEntityUpdate: (callback: (entity: LiveEntity) => void) => () => void;
-      massInviteFriends: (options: { filterAutoMod?: boolean; delayMs?: number }) => Promise<{ success: boolean; invited?: number; skipped?: number; failed?: number; total?: number; error?: string }>;
       onMassInviteProgress: (callback: (data: { sent: number; skipped: number; failed: number; total: number; current?: string; done?: boolean }) => void) => () => void;
       
       getCurrentGroup: () => Promise<string | null>;
@@ -397,6 +415,8 @@ export interface ElectronAPI {
       saveRule: (rule: AutoModRule) => Promise<AutoModRule>;
       deleteRule: (ruleId: number) => Promise<boolean>;
       checkUser: (user: AutoModUserInput) => Promise<{ action: 'ALLOW' | 'REJECT' | 'AUTO_BLOCK' | 'NOTIFY_ONLY'; reason?: string; ruleName?: string }>;
+      onViolation: (callback: (data: { displayName: string; userId: string; action: string; reason: string }) => void) => () => void;
+      testNotification: () => Promise<boolean>;
   };
 
   // OSC API
@@ -406,6 +426,29 @@ export interface ElectronAPI {
       send: (address: string, args: unknown[]) => Promise<boolean>;
       getAnnouncementConfig: (groupId: string) => Promise<GroupAnnouncementConfig>;
       setAnnouncementConfig: (groupId: string, config: Partial<GroupAnnouncementConfig>) => Promise<GroupAnnouncementConfig>;
+  };
+
+  // Discord RPC API
+  discordRpc: {
+      getConfig: () => Promise<DiscordRpcConfig>;
+      setConfig: (config: DiscordRpcConfig) => Promise<{ success: boolean }>;
+      getStatus: () => Promise<{ connected: boolean; enabled: boolean }>;
+      reconnect: () => Promise<{ success: boolean; error?: string }>;
+      reconnect: () => Promise<{ success: boolean; error?: string }>;
+      disconnect: () => Promise<{ success: boolean }>;
+  };
+
+  // Analytics API
+  stats: {
+      getActivity: (groupId: string, days?: number) => Promise<{ traffic: unknown[], automod: unknown[] }>;
+      getHeatmap: (groupId: string) => Promise<unknown[]>;
+  };
+
+  // Discord Webhook API
+  webhook: {
+      getUrl: (groupId: string) => Promise<string>;
+      setUrl: (groupId: string, url: string) => Promise<boolean>;
+      test: (groupId: string) => Promise<boolean>;
   };
 }
 

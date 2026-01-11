@@ -25,6 +25,8 @@ export function useInstanceMonitorInit(isAuthenticated: boolean) {
     // Fetch initial group state
     window.electron.instance.getCurrentGroup().then(groupId => {
         setCurrentGroupId(groupId);
+    }).catch(err => {
+        console.error('Failed to get current group:', err);
     });
 
     // Setup event listeners

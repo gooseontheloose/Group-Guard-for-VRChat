@@ -1,25 +1,22 @@
-﻿import React, { useEffect, useState, memo, useMemo } from 'react';
+﻿import React, { useEffect, useState, memo, useRef } from 'react';
 import { useGroupStore } from '../../stores/groupStore';
 import { useAuditStore } from '../../stores/auditStore';
-import { useUserProfileStore } from '../../stores/userProfileStore';
 import { useDataRefresh } from '../../hooks/useDataRefresh';
 import { usePipelineStatus } from '../../hooks/usePipelineInit';
 import { GlassPanel } from '../../components/ui/GlassPanel';
-import { NeonButton } from '../../components/ui/NeonButton';
 import { RefreshTimer } from '../../components/ui/RefreshTimer';
 import { PipelineIndicator } from '../../components/ui/PipelineStatus';
+import { NeonButton } from '../../components/ui/NeonButton';
 import { MembersListDialog } from '../dashboard/dialogs/MembersListDialog';
 import { RequestsListDialog } from '../dashboard/dialogs/RequestsListDialog';
 import { BansListDialog } from '../dashboard/dialogs/BansListDialog';
 import { InstancesListDialog } from '../dashboard/dialogs/InstancesListDialog';
-import { InstanceMonitorWidget } from './widgets/InstanceMonitorWidget';
-import { MemberSearchWidget } from './widgets/MemberSearchWidget';
-
-
 import { StatTile } from './components/StatTile';
 import styles from './DashboardView.module.css';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Filter, ChevronDown, Check } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { MassInviteDialog } from './dialogs/MassInviteDialog';
+import { AnalyticsView } from './views/AnalyticsView';
+import { formatDistanceToNow } from 'date-fns';
 
 const containerVariants = {
     hidden: { opacity: 0 },
@@ -32,13 +29,8 @@ const containerVariants = {
     }
 };
 
-const itemVariants = {
-    hidden: { opacity: 0, y: 20 },
-    show: { opacity: 1, y: 0, transition: { type: "spring" as const, stiffness: 300, damping: 24 } }
-};
 
 
-// Audit event types that affect member count
 const MEMBER_AFFECTING_EVENTS = [
   'group.user.join',
   'group.user.leave', 
@@ -60,86 +52,54 @@ export const DashboardView: React.FC = memo(() => {
       fetchGroupMembers,
       isMembersLoading,
   } = useGroupStore();
-  const { logs, fetchLogs, isLoading: isLogsLoading } = useAuditStore();
-  const { openProfile } = useUserProfileStore();
   
-  // Pipeline WebSocket connection status
+  const { logs, fetchLogs, isLoading: isLogsLoading } = useAuditStore();
   const pipelineStatus = usePipelineStatus();
   
-  // Auto-refresh hooks with visual timers
+  // Data Refresh Hooks
   const instancesRefresh = useDataRefresh({ type: 'instances' });
   const requestsRefresh = useDataRefresh({ type: 'requests' });
   const bansRefresh = useDataRefresh({ type: 'bans' });
   
+  // Dialog State
   const [showMembers, setShowMembers] = useState(false);
   const [showRequests, setShowRequests] = useState(false);
   const [showBans, setShowBans] = useState(false);
   const [showInstances, setShowInstances] = useState(false);
+  const [showMassInvite, setShowMassInvite] = useState(false);
   
-  // Member refresh state with 30s cooldown
+  // Member refresh throttling
   const [memberRefreshCooldown, setMemberRefreshCooldown] = useState(0);
-  const lastLogCountRef = React.useRef(0);
-  const hasFetchedMembersRef = React.useRef(false);
-  const lastGroupIdRef = React.useRef<string | null>(null);
+  const lastLogCountRef = useRef(0);
+  const hasFetchedMembersRef = useRef(false);
+  const lastGroupIdRef = useRef<string | null>(null);
   
-  type AuditFilterType = 'all' | 'joins' | 'requests' | 'invited' | 'bans' | 'instances' | 'mod' | 'settings';
-  const [auditFilter, setAuditFilter] = useState<AuditFilterType>('all');
-  const [showFilterMenu, setShowFilterMenu] = useState(false);
-  
-  // Filter logs based on selected tab
-  const filteredLogs = useMemo(() => {
-    if (auditFilter === 'all') return logs;
-    
-    return logs.filter(log => {
-      const eventType = (log.eventType || '').toLowerCase();
-      switch (auditFilter) {
-        case 'joins':
-          return eventType.includes('join') || eventType.includes('leave');
-        case 'requests':
-           return eventType.includes('request');
-        case 'invited':
-           return eventType.includes('invite') && !eventType.includes('request');
-        case 'bans':
-          return eventType.includes('ban') || eventType.includes('unban') || eventType.includes('kick');
-        case 'instances':
-          return (eventType.includes('instance') && (eventType.includes('create') || eventType.includes('close') || eventType.includes('open')));
-        case 'mod':
-          return eventType.includes('warn') || eventType.includes('mute') || eventType.includes('role');
-        case 'settings':
-          return eventType.includes('update') || eventType.includes('create') || eventType.includes('delete') || eventType.includes('edit');
-        default:
-          return true;
-      }
-    });
-  }, [logs, auditFilter]);
+  const [view, setView] = useState<'overview' | 'analytics'>('overview');
 
-  // Initial member fetch (once per app open) and reset on group change
+  // Initial Data Fetch
   useEffect(() => {
     if (!selectedGroup) return;
     
-    // Reset if group changed
     if (lastGroupIdRef.current !== selectedGroup.id) {
       hasFetchedMembersRef.current = false;
       lastLogCountRef.current = 0;
       lastGroupIdRef.current = selectedGroup.id;
     }
     
-    // Initial fetch
     if (!hasFetchedMembersRef.current) {
       fetchGroupMembers(selectedGroup.id, 0);
       hasFetchedMembersRef.current = true;
     }
-  }, [selectedGroup, fetchGroupMembers]);
+    
+    fetchLogs(selectedGroup.id);
+  }, [selectedGroup, fetchGroupMembers, fetchLogs]);
 
-  // Watch audit logs for member-affecting events
+  // Reactive Updates based on Logs
   useEffect(() => {
     if (!selectedGroup || logs.length === 0) return;
     
     const lastCount = lastLogCountRef.current;
-    
-    // Check if we have new logs since last check
     if (logs.length > lastCount && lastCount > 0) {
-      // Check if any new log is a member-affecting event
       const newLogs = logs.slice(0, logs.length - lastCount);
       const hasMemberEvent = newLogs.some(log => 
         MEMBER_AFFECTING_EVENTS.some(event => 
@@ -148,20 +108,16 @@ export const DashboardView: React.FC = memo(() => {
       );
       
       if (hasMemberEvent) {
-        // Refresh member count
         fetchGroupMembers(selectedGroup.id, 0);
       }
     }
-    
     lastLogCountRef.current = logs.length;
   }, [logs, selectedGroup, fetchGroupMembers]);
 
-  // Cooldown timer
+  // Cooldown effect
   useEffect(() => {
     if (memberRefreshCooldown > 0) {
-      const timer = setTimeout(() => {
-        setMemberRefreshCooldown(prev => prev - 1);
-      }, 1000);
+      const timer = setTimeout(() => setMemberRefreshCooldown(prev => prev - 1), 1000);
       return () => clearTimeout(timer);
     }
   }, [memberRefreshCooldown]);
@@ -169,16 +125,59 @@ export const DashboardView: React.FC = memo(() => {
   const handleMemberRefresh = (e?: React.MouseEvent) => {
     e?.stopPropagation();
     if (memberRefreshCooldown > 0 || !selectedGroup) return;
-    
     fetchGroupMembers(selectedGroup.id, 0);
-    setMemberRefreshCooldown(30); // 30 second cooldown
+    setMemberRefreshCooldown(30);
   };
 
-  useEffect(() => {
-    if (selectedGroup) {
-      fetchLogs(selectedGroup.id);
-    }
-  }, [selectedGroup, fetchLogs]);
+  const getLogIcon = (type: string) => {
+      if (type.includes('ban')) return '🚫';
+      if (type.includes('kick')) return '🥾';
+      if (type.includes('invite')) return '📩';
+      if (type.includes('automod')) return '🤖';
+      return '📝';
+  };
+
+  const getLogColor = (type: string) => {
+      if (type.includes('ban')) return 'var(--color-danger)';
+      if (type.includes('kick')) return 'var(--color-warning)';
+      if (type.includes('invite')) return 'var(--color-success)';
+      if (type.includes('automod')) return 'var(--color-info)';
+      return 'var(--color-text-dim)';
+  };
+
+  const formatLogEntry = (log: { actorDisplayName: string; description: string; type?: string }) => {
+      let actor = log.actorDisplayName;
+      let desc = log.description;
+
+      // Fix "by ." at end which happens when actor is missing in VRChat response
+      if (desc.endsWith(' by .')) {
+          desc = desc.substring(0, desc.length - 5);
+      }
+
+      // If actor is UNKNOWN, and description starts with "Name User ...", heuristic to extract actor
+      // Example: "AppleExpl01t User DaBomb55..." -> Actor: AppleExpl01t
+      if (actor === 'UNKNOWN' && desc.match(/^\S+ User /)) {
+           const parts = desc.split(' ');
+           if (parts.length > 0) {
+               actor = parts[0];
+               // We don't necessarily strip it from desc yet, we'll let the next cleaner do it if needed
+           }
+      }
+
+      // Remove actor name from description to avoid duplication
+      // e.g. "User X added by Actor Y" -> "User X added by" (then we clean "by")
+      let cleanDesc = desc;
+      if (actor !== 'UNKNOWN') {
+         cleanDesc = cleanDesc.replace(actor, '');
+      }
+      
+      cleanDesc = cleanDesc.replace(/by \s*$/, '').trim();
+      
+      // Cleanup double spaces
+      cleanDesc = cleanDesc.replace(/\s+/g, ' ');
+
+      return { actor, description: cleanDesc };
+  };
 
   return (
     <>
@@ -187,290 +186,223 @@ export const DashboardView: React.FC = memo(() => {
         variants={containerVariants}
         initial="hidden"
         animate="show"
+        style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '1rem', padding: '1rem' }}
     >
-      
-        {/* Top Header & Stats Row */}
-        <GlassPanel className={styles.headerPanel}>
-
+        {/* Header Section */}
+        <GlassPanel className={styles.headerPanel} style={{ flexShrink: 0 }}>
             <div className={styles.titleSection}>
-                <motion.h1 
-                    className={`${styles.title} text-gradient`}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: 0.2 }}
-                >
+                <h1 className={`${styles.title} text-gradient`}>
                     {selectedGroup?.name || 'Dashboard'}
-                </motion.h1>
-                <motion.div 
-                    className={styles.subtitle}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: 0.3 }}
-                >
-                    COMMAND CENTER
-                </motion.div>
+                </h1>
+                <div style={{ display: 'flex', gap: '20px' }}>
+                    <div 
+                        onClick={() => setView('overview')}
+                        className={styles.subtitle} 
+                        style={{ cursor: 'pointer', color: view === 'overview' ? 'var(--color-primary)' : 'var(--color-text-dim)', borderBottom: view === 'overview' ? '2px solid var(--color-primary)' : '2px solid transparent' }}
+                    >
+                        COMMAND CENTER
+                    </div>
+                    <div 
+                        onClick={() => setView('analytics')}
+                        className={styles.subtitle} 
+                        style={{ cursor: 'pointer', color: view === 'analytics' ? 'var(--color-primary)' : 'var(--color-text-dim)', borderBottom: view === 'analytics' ? '2px solid var(--color-primary)' : '2px solid transparent' }}
+                    >
+                        ANALYTICS & METRICS
+                    </div>
+                </div>
             </div>
 
-            {/* Stats Grid */}
             <div className={styles.statsGrid}>
-                
-                {/* Member Count Tile */}
-                <motion.div variants={itemVariants} style={{ height: '100%' }}>
-                    <StatTile 
-                        label="MEMBERS"
-                        value={selectedGroup?.memberCount || 0}
-                        color="var(--color-primary)"
-                        onClick={() => setShowMembers(true)}
-                        headerLeftExtra={pipelineStatus.connected && <PipelineIndicator />}
-                        headerRight={
-                            <RefreshTimer 
-                                secondsUntilRefresh={memberRefreshCooldown} 
-                                isRefreshing={isMembersLoading} 
-                                onRefreshClick={handleMemberRefresh} 
-                            />
-                        }
-                    />
-                </motion.div>
-
-                {/* Active Instances Tile */}
-                <motion.div variants={itemVariants} style={{ height: '100%' }}>
-                    <StatTile
-                        label="INSTANCES"
-                        value={isInstancesLoading ? '...' : instances.length}
-                        color="var(--color-info)"
-                        onClick={() => setShowInstances(true)}
-                        headerRight={
-                            <RefreshTimer 
-                                secondsUntilRefresh={instancesRefresh.secondsUntilRefresh} 
-                                isRefreshing={instancesRefresh.isRefreshing} 
-                                onRefreshClick={(e) => { e?.stopPropagation(); instancesRefresh.refreshNow(); }} 
-                            />
-                        }
-                    />
-                </motion.div>
-
-                {/* Requests Tile */}
-                <motion.div variants={itemVariants} style={{ height: '100%' }}>
-                    <StatTile
-                        label="REQUESTS"
-                        value={isRequestsLoading ? '...' : requests.length}
-                        color="var(--color-accent)"
-                        onClick={() => setShowRequests(true)}
-                        headerRight={
-                            <RefreshTimer 
-                                secondsUntilRefresh={requestsRefresh.secondsUntilRefresh} 
-                                isRefreshing={requestsRefresh.isRefreshing} 
-                                onRefreshClick={(e) => { e?.stopPropagation(); requestsRefresh.refreshNow(); }} 
-                            />
-                        }
-                    />
-                </motion.div>
-
-                {/* Bans Tile */}
-                <motion.div variants={itemVariants} style={{ height: '100%' }}>
-                    <StatTile
-                        label="BANS"
-                        value={isBansLoading ? '...' : bans.length}
-                        color="var(--color-danger)"
-                        onClick={() => setShowBans(true)}
-                        headerRight={
-                            <RefreshTimer 
-                                secondsUntilRefresh={bansRefresh.secondsUntilRefresh} 
-                                isRefreshing={bansRefresh.isRefreshing} 
-                                onRefreshClick={(e) => { e?.stopPropagation(); bansRefresh.refreshNow(); }} 
-                            />
-                        }
-                    />
-                </motion.div>
+                {/* Stats Tiles Reuse */}
+                <StatTile 
+                    label="MEMBERS"
+                    value={selectedGroup?.memberCount || 0}
+                    color="var(--color-primary)"
+                    onClick={() => setShowMembers(true)}
+                    headerLeftExtra={pipelineStatus.connected && <PipelineIndicator />}
+                    headerRight={
+                        <RefreshTimer 
+                            secondsUntilRefresh={memberRefreshCooldown} 
+                            isRefreshing={isMembersLoading} 
+                            onRefreshClick={handleMemberRefresh} 
+                        />
+                    }
+                />
+                <StatTile
+                    label="INSTANCES"
+                    value={isInstancesLoading ? '...' : instances.length}
+                    color="var(--color-info)"
+                    onClick={() => setShowInstances(true)}
+                    headerRight={
+                        <RefreshTimer 
+                            secondsUntilRefresh={instancesRefresh.secondsUntilRefresh} 
+                            isRefreshing={instancesRefresh.isRefreshing} 
+                            onRefreshClick={(e) => { e?.stopPropagation(); instancesRefresh.refreshNow(); }} 
+                        />
+                    }
+                />
+                <StatTile
+                    label="REQUESTS"
+                    value={isRequestsLoading ? '...' : requests.length}
+                    color="var(--color-accent)"
+                    onClick={() => setShowRequests(true)}
+                    headerRight={
+                        <RefreshTimer 
+                            secondsUntilRefresh={requestsRefresh.secondsUntilRefresh} 
+                            isRefreshing={requestsRefresh.isRefreshing} 
+                            onRefreshClick={(e) => { e?.stopPropagation(); requestsRefresh.refreshNow(); }} 
+                        />
+                    }
+                />
+                <StatTile
+                    label="BANS"
+                    value={isBansLoading ? '...' : bans.length}
+                    color="var(--color-danger)"
+                    onClick={() => setShowBans(true)}
+                    headerRight={
+                        <RefreshTimer 
+                            secondsUntilRefresh={bansRefresh.secondsUntilRefresh} 
+                            isRefreshing={bansRefresh.isRefreshing} 
+                            onRefreshClick={(e) => { e?.stopPropagation(); bansRefresh.refreshNow(); }} 
+                        />
+                    }
+                />
             </div>
         </GlassPanel>
 
-        {/* Main Content Area: Swapped Columns (Monitor Left, Audit Right) */}
-        <div className={styles.contentGrid}>
-            
-            {/* Left: Instance Monitor + Member Search (Now Wider) */}
-            <div className={styles.monitorColumn}>
-                <MemberSearchWidget />
-                <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-                    <InstanceMonitorWidget />
+
+
+        {view === 'overview' ? (
+            /* Main Content Split */
+            <div style={{ display: 'flex', gap: '1rem', flex: 1, minHeight: 0 }}>
+                
+                {/* Left: Activity Feed */}
+                <GlassPanel style={{ flex: 2, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+                    <div style={{ padding: '1rem', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>Recent Activity</h3>
+                        <NeonButton size="sm" variant="secondary" onClick={() => fetchLogs(selectedGroup?.id || '')} disabled={isLogsLoading}>
+                            {isLogsLoading ? 'Refreshing...' : 'Refresh'}
+                        </NeonButton>
+                    </div>
+                    
+                    <div style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>
+                        {logs.length === 0 ? (
+                            <div style={{ 
+                                height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', 
+                                color: 'var(--color-text-dim)', flexDirection: 'column', gap: '0.5rem' 
+                            }}>
+                               <span style={{ fontSize: '2rem' }}>📝</span>
+                               <span>No recent activity</span>
+                            </div>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                {logs.slice(0, 20).map(log => {
+                                    const { actor, description } = formatLogEntry(log);
+                                    return (
+                                    <motion.div 
+                                        key={log.id}
+                                        initial={{ opacity: 0, x: -10 }}
+                                        animate={{ opacity: 1, x: 0 }}
+                                        style={{ 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            gap: '1rem', 
+                                            padding: '0.75rem', 
+                                            background: 'rgba(255,255,255,0.03)', 
+                                            borderRadius: '8px',
+                                            border: '1px solid rgba(255,255,255,0.05)'
+                                        }}
+                                    >
+                                        <div style={{ fontSize: '1.2rem' }}>{getLogIcon(log.type || '')}</div>
+                                        <div style={{ flex: 1 }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                                                <span style={{ fontWeight: 600, color: getLogColor(log.type || '') }}>
+                                                    {actor}
+                                                </span>
+                                                <span style={{ fontSize: '0.75rem', color: 'var(--color-text-dim)' }}>
+                                                    {formatDistanceToNow(new Date(log.created_at), { addSuffix: true })}
+                                                </span>
+                                            </div>
+                                            <div style={{ fontSize: '0.9rem', color: 'var(--color-text-dim)', marginTop: '0.1rem' }}>
+                                                {description}
+                                            </div>
+                                        </div>
+                                    </motion.div>
+                                );})}
+                            </div>
+                        )}
+                    </div>
+                </GlassPanel>
+
+                {/* Right: Quick Actions & Status */}
+                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                    
+                    {/* Status Card */}
+                    <GlassPanel style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                        <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>System Status</h3>
+                        
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', background: 'rgba(0,0,0,0.2)', borderRadius: '8px' }}>
+                            <span>Pipeline Connection</span>
+                            <PipelineIndicator />
+                        </div>
+                        
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', background: 'rgba(0,0,0,0.2)', borderRadius: '8px' }}>
+                             <span>Instance Monitor</span>
+                             <span style={{ 
+                                 color: instances.length > 0 ? 'var(--color-success)' : 'var(--color-text-dim)',
+                                 fontWeight: 600
+                             }}>
+                                 {instances.length > 0 ? 'Active' : 'Standby'}
+                             </span>
+                        </div>
+                    </GlassPanel>
+
+                    {/* Quick Actions */}
+                    <GlassPanel style={{ flex: 1, padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                        <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>Quick Actions</h3>
+                        
+                        <NeonButton 
+                            onClick={() => setShowMassInvite(true)} 
+                            style={{ width: '100%', justifyContent: 'center' }}
+                            variant="primary"
+                        >
+                            <span style={{ marginRight: '0.5rem' }}>📨</span> Mass Invite
+                        </NeonButton>
+                        
+                        <NeonButton 
+                            onClick={() => {
+                                 requestsRefresh.refreshNow();
+                                 bansRefresh.refreshNow();
+                                 instancesRefresh.refreshNow();
+                                 fetchGroupMembers(selectedGroup?.id || '', 0);
+                                 fetchLogs(selectedGroup?.id || '');
+                            }}
+                            style={{ width: '100%', justifyContent: 'center' }}
+                            variant="secondary"
+                        >
+                            <span style={{ marginRight: '0.5rem' }}>🔄</span> Refresh All Data
+                        </NeonButton>
+
+                        <div style={{ marginTop: 'auto', padding: '1rem', background: 'rgba(var(--primary-hue), 100%, 50%, 0.1)', borderRadius: '8px', fontSize: '0.85rem', color: 'var(--color-primary)' }}>
+                            <strong style={{ display: 'block', marginBottom: '0.25rem' }}>Tip:</strong>
+                            Use the "Live View" for real-time monitoring of your current instance.
+                        </div>
+                    </GlassPanel>
                 </div>
             </div>
-
-            {/* Right: Audit Log Feed (Compact) */}
-            <GlassPanel className={styles.auditPanel}>
-                <div className={styles.auditHeader}>
-                    <div className={styles.auditTitle}>
-                        <h3>Live Feed</h3>
-                        <div className={styles.liveIndicator} />
-                    </div>
-                    <NeonButton size="sm" variant="ghost" onClick={() => selectedGroup && fetchLogs(selectedGroup.id)} disabled={isLogsLoading}>
-                        {isLogsLoading ? '...' : 'SYNC'}
-                    </NeonButton>
-                </div>
-                
-                {/* Filter Tabs - Compact */}
-                {/* Filter Dropdown */}
-                <div style={{ position: 'relative', zIndex: 10 }}>
-                    <NeonButton 
-                        size="sm" 
-                        variant="ghost" // Using ghost to blend in better, or specific style
-                        onClick={() => setShowFilterMenu(!showFilterMenu)}
-                        style={{ 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            gap: '6px',
-                            border: showFilterMenu ? '1px solid rgba(255,255,255,0.2)' : '1px solid transparent',
-                            background: showFilterMenu ? 'rgba(255,255,255,0.05)' : 'transparent'
-                        }}
-                    >
-                        <Filter size={14} />
-                        <span style={{ fontSize: '0.8rem', fontWeight: 600 }}>
-                            {auditFilter === 'all' ? 'Filter Feed' : auditFilter.toUpperCase()}
-                        </span>
-                        <ChevronDown size={14} style={{ opacity: 0.7, transform: showFilterMenu ? 'rotate(180deg)' : 'none', transition: 'transform 0.2s' }} />
-                    </NeonButton>
-
-                    <AnimatePresence>
-                        {showFilterMenu && (
-                            <>
-                            <div 
-                                style={{ position: 'fixed', inset: 0, zIndex: 40 }} 
-                                onClick={() => setShowFilterMenu(false)}
-                            />
-                            <motion.div
-                                initial={{ opacity: 0, y: -5, scale: 0.95 }}
-                                animate={{ opacity: 1, y: 0, scale: 1 }}
-                                exit={{ opacity: 0, y: -5, scale: 0.95 }}
-                                transition={{ duration: 0.1 }}
-                                style={{
-                                    position: 'absolute',
-                                    top: '100%',
-                                    right: 0,
-                                    zIndex: 50,
-                                    marginTop: '8px',
-                                    minWidth: '180px',
-                                    background: '#0a0a0a',
-                                    border: '1px solid rgba(255,255,255,0.1)',
-                                    borderRadius: '12px',
-                                    padding: '6px',
-                                    boxShadow: '0 4px 20px rgba(0,0,0,0.5)',
-                                    display: 'flex',
-                                    flexDirection: 'column',
-                                    gap: '2px'
-                                }}
-                            >
-                                <div style={{ 
-                                    padding: '6px 10px', 
-                                    fontSize: '0.7rem', 
-                                    color: 'var(--color-text-dim)', 
-                                    textTransform: 'uppercase', 
-                                    letterSpacing: '0.05em',
-                                    fontWeight: 600
-                                }}>
-                                    Filter Events
-                                </div>
-                                
-                                {(['all', 'joins', 'requests', 'invited', 'bans', 'mod', 'instances', 'settings'] as const).map(option => (
-                                     <div
-                                        key={option}
-                                        onClick={() => {
-                                            setAuditFilter(option);
-                                            setShowFilterMenu(false);
-                                        }}
-                                        style={{
-                                            padding: '8px 10px',
-                                            borderRadius: '8px',
-                                            cursor: 'pointer',
-                                            color: auditFilter === option ? '#fff' : 'rgba(255,255,255,0.7)',
-                                            background: auditFilter === option ? 'rgba(255,255,255,0.1)' : 'transparent',
-                                            fontSize: '0.85rem',
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'space-between',
-                                            transition: 'all 0.1s'
-                                        }}
-                                        onMouseEnter={(e) => {
-                                            if (auditFilter !== option) e.currentTarget.style.background = 'rgba(255,255,255,0.05)';
-                                        }}
-                                        onMouseLeave={(e) => {
-                                            if (auditFilter !== option) e.currentTarget.style.background = 'transparent';
-                                        }}
-                                     >
-                                        <span style={{ textTransform: 'capitalize' }}>
-                                            {option === 'mod' ? 'Moderation' : option}
-                                        </span>
-                                        {auditFilter === option && <Check size={14} color="var(--color-primary)" />}
-                                     </div>
-                                 ))}
-                            </motion.div>
-                            </>
-                        )}
-                    </AnimatePresence>
-                </div>
-                
-                <div className={styles.logList}>
-                    {filteredLogs.length === 0 && !isLogsLoading ? (
-                        <div className={styles.emptyState}>
-                            - Empty -
-                        </div>
-                    ) : (
-                        filteredLogs.map((log) => (
-                            <div key={log.id} className={styles.logItem}>
-                                <div 
-                                    className={styles.logDot} 
-                                    style={{
-                                        background: log.eventType?.includes('ban') ? 'var(--color-danger)' : (log.eventType?.includes('join') ? 'var(--color-success)' : 'var(--color-accent)')
-                                    }} 
-                                />
-                                <div className={styles.logContent}>
-                                    <div className={styles.scrollWrapper}>
-                                        <span className={styles.timestamp}>
-                                            {new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                                        </span>
-                                        <span 
-                                            className={styles.actorName}
-                                            onClick={(e) => { e.stopPropagation(); if (log.actorId) openProfile(log.actorId); }}
-                                        >
-                                            {log.actorDisplayName}
-                                        </span>
-                                        <span className={styles.logDescription}>
-                                            {log.description || log.eventType}
-                                        </span>
-                                        {/* Spacer to allow full scroll visibility in marquee if needed */}
-                                        <span style={{ minWidth: '20px' }} />
-                                    </div>
-                                </div>
-                            </div>
-                        ))
-                    )}
-                </div>
-            </GlassPanel>
-        </div>
+        ) : (
+            <AnalyticsView />
+        )}
 
         {/* Dialogs */}
-        <MembersListDialog 
-        isOpen={showMembers} 
-        onClose={() => setShowMembers(false)} 
-      />
-      
-      <RequestsListDialog
-          isOpen={showRequests}
-          onClose={() => setShowRequests(false)}
-      />
-
-      <BansListDialog
-          isOpen={showBans}
-          onClose={() => setShowBans(false)}
-      />
-
-      <InstancesListDialog
-          isOpen={showInstances}
-          onClose={() => setShowInstances(false)}
-      />
+        <MembersListDialog isOpen={showMembers} onClose={() => setShowMembers(false)} />
+        <RequestsListDialog isOpen={showRequests} onClose={() => setShowRequests(false)} />
+        <BansListDialog isOpen={showBans} onClose={() => setShowBans(false)} />
+        <InstancesListDialog isOpen={showInstances} onClose={() => setShowInstances(false)} />
+        <MassInviteDialog isOpen={showMassInvite} onClose={() => setShowMassInvite(false)} />
     </motion.div>
     </>
   );
 });
 
 DashboardView.displayName = 'DashboardView';
-

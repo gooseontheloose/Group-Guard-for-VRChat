@@ -9,6 +9,9 @@ import { instanceLoggerService } from './InstanceLoggerService';
 import { logWatcherService } from './LogWatcherService';
 import { groupAuthorizationService } from './GroupAuthorizationService';
 import { evaluateUser } from './AutoModLogic';
+import { fetchUser } from './UserService';
+import { windowService } from './WindowService';
+import { discordWebhookService } from './DiscordWebhookService';
 
 const logger = log.scope('AutoModService');
 
@@ -78,6 +81,297 @@ const persistAction = async (logEntry: any) => {
     }
 };
 
+// ============================================
+// AUTO-PROCESS JOIN REQUESTS
+// ============================================
+
+// Process a single join request
+export const processJoinRequest = async (
+    groupId: string, 
+    userId: string, 
+    displayName: string,
+    _userDetails?: {
+        bio?: string;
+        status?: string;
+        statusDescription?: string;
+        pronouns?: string;
+        tags?: string[];
+        ageVerificationStatus?: string;
+    }
+): Promise<{ processed: boolean; action: 'accept' | 'reject' | 'skip'; reason?: string }> => {
+    const client = getVRChatClient();
+    if (!client) {
+        logger.warn('[AutoMod] Cannot process request - not authenticated');
+        return { processed: false, action: 'skip', reason: 'Not authenticated' };
+    }
+
+    // Check if already processed
+    const cacheKey = `gatekeeper:${groupId}:${userId}`;
+    if (processedRequests.has(cacheKey)) {
+        logger.debug(`[AutoMod] Request ${userId} already processed, skipping`);
+        return { processed: false, action: 'skip', reason: 'Already processed' };
+    }
+
+    // Check if any rules are enabled
+    const rules = store.get('rules').filter(r => r.enabled);
+    if (rules.length === 0) {
+        logger.debug('[AutoMod] No enabled rules, skipping auto-processing');
+        return { processed: false, action: 'skip', reason: 'No enabled rules' };
+    }
+
+    try {
+        // Fetch full user details if not provided
+        let fullUser = _userDetails;
+        
+        if (!fullUser || !fullUser.tags) {
+            try {
+                // Use centralized fetchUser to leverage cache and consistent logging
+                const fetched = await fetchUser(userId);
+                if (fetched) {
+                    fullUser = {
+                        ...fullUser,
+                        tags: fetched.tags,
+                        bio: fetched.bio,
+                        status: fetched.status,
+                        statusDescription: fetched.statusDescription,
+                        pronouns: fetched.pronouns,
+                        ageVerificationStatus: fetched.ageVerificationStatus // Verify this field exists on fetched user
+                    };
+                }
+            } catch (e) {
+                logger.warn(`[AutoMod] Failed to fetch user details for ${displayName}`, e);
+            }
+        }
+
+        // Evaluate user against all enabled rules
+        const evaluation = await evaluateUser({
+            id: userId,
+            displayName: displayName,
+            tags: fullUser?.tags,
+            bio: fullUser?.bio,
+            status: fullUser?.status,
+            statusDescription: fullUser?.statusDescription,
+            pronouns: fullUser?.pronouns,
+            ageVerificationStatus: fullUser?.ageVerificationStatus
+        });
+
+        logger.info(`[AutoMod] Gatekeeper evaluation for ${displayName}: ${evaluation.action}${evaluation.reason ? ` (${evaluation.reason})` : ''}`);
+
+        // Mark as processed
+        processedRequests.add(cacheKey);
+        pruneProcessedCache();
+
+        if (evaluation.action === 'ALLOW') {
+            // User passes all rules - auto-accept
+            try {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const clientAny = client as any;
+                await clientAny.respondGroupJoinRequest({
+                    path: { groupId, userId },
+                    body: { action: 'accept' }
+                });
+                
+                logger.info(`[AutoMod] ✓ Auto-accepted ${displayName} into group ${groupId}`);
+                
+                await persistAction({
+                    timestamp: new Date(),
+                    user: displayName,
+                    userId: userId,
+                    groupId: groupId,
+                    action: 'AUTO_ACCEPT',
+                    reason: 'Passed all AutoMod filters',
+                    module: 'Gatekeeper',
+                    details: { evaluation }
+                });
+
+                return { processed: true, action: 'accept' };
+            } catch (e) {
+                logger.error(`[AutoMod] Failed to accept ${displayName}:`, e);
+                return { processed: false, action: 'skip', reason: 'API error on accept' };
+            }
+        } else {
+            // User failed a rule - auto-reject
+            try {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const clientAny = client as any;
+                await clientAny.respondGroupJoinRequest({
+                    path: { groupId, userId },
+                    body: { action: 'reject' }
+                });
+                
+                logger.info(`[AutoMod] ✗ Auto-rejected ${displayName} from group ${groupId}: ${evaluation.reason}`);
+                
+                await persistAction({
+                    timestamp: new Date(),
+                    user: displayName,
+                    userId: userId,
+                    groupId: groupId,
+                    action: evaluation.action,
+                    reason: evaluation.reason || 'Failed AutoMod filter',
+                    module: 'Gatekeeper',
+                    details: { evaluation, ruleName: evaluation.ruleName }
+                });
+
+                // WEBHOOK
+                discordWebhookService.sendEvent(
+                    groupId,
+                    '🛡️ AutoMod Gatekeeper',
+                    `**User Rejected**: ${displayName} (${userId})\n**Reason**: ${evaluation.reason}`,
+                    0xED4245, // Red
+                    [
+                        { name: 'Request Type', value: 'Join Request', inline: true },
+                        { name: 'Rule', value: evaluation.ruleName || 'Unknown', inline: true }
+                    ]
+                );
+
+                return { processed: true, action: 'reject', reason: evaluation.reason };
+            } catch (e) {
+                logger.error(`[AutoMod] Failed to reject ${displayName}:`, e);
+                return { processed: false, action: 'skip', reason: 'API error on reject' };
+            }
+        }
+    } catch (error) {
+        logger.error(`[AutoMod] Error processing join request for ${displayName}:`, error);
+        return { processed: false, action: 'skip', reason: 'Processing error' };
+    }
+};
+
+// Process all pending requests for all authorized groups
+export const processAllPendingRequests = async (): Promise<{ 
+    totalProcessed: number; 
+    accepted: number; 
+    rejected: number;
+    skipped: number;
+}> => {
+    const client = getVRChatClient();
+    if (!client) {
+        logger.warn('[AutoMod] Cannot process pending requests - not authenticated');
+        return { totalProcessed: 0, accepted: 0, rejected: 0, skipped: 0 };
+    }
+
+    // Check if any rules are enabled
+    const allRules = store.get('rules');
+    const rules = allRules.filter(r => r.enabled);
+    logger.info(`[AutoMod] Rules check: ${rules.length} enabled out of ${allRules.length} total`);
+    
+    if (rules.length === 0) {
+        logger.info('[AutoMod] No enabled rules, skipping gatekeeper processing. Enable at least one AutoMod filter to auto-process requests.');
+        return { totalProcessed: 0, accepted: 0, rejected: 0, skipped: 0 };
+    }
+    
+    logger.info(`[AutoMod] Enabled rules: ${rules.map(r => r.name || r.type).join(', ')}`);
+
+    const authorizedGroups = groupAuthorizationService.getAllowedGroupIds();
+    if (authorizedGroups.length === 0) {
+        logger.info('[AutoMod] No authorized groups, skipping gatekeeper processing');
+        return { totalProcessed: 0, accepted: 0, rejected: 0, skipped: 0 };
+    }
+
+    logger.info(`[AutoMod] Starting gatekeeper processing for ${authorizedGroups.length} authorized groups...`);
+
+    let totalProcessed = 0;
+    let accepted = 0;
+    let rejected = 0;
+    let skipped = 0;
+
+    for (const groupId of authorizedGroups) {
+        try {
+            // Fetch pending requests for this group
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const response = await (client as any).getGroupRequests({
+                path: { groupId },
+                query: { n: 100, offset: 0 }
+            });
+
+            interface JoinRequest {
+                userId?: string;
+                user?: {
+                    id?: string;
+                    displayName?: string;
+                    bio?: string;
+                    status?: string;
+                    statusDescription?: string;
+                    pronouns?: string;
+                    tags?: string[];
+                    ageVerificationStatus?: string;
+                };
+            }
+
+            const requests: JoinRequest[] = Array.isArray(response.data) ? response.data : [];
+            
+            if (requests.length === 0) {
+                logger.debug(`[AutoMod] No pending requests for group ${groupId}`);
+                continue;
+            }
+
+            logger.info(`[AutoMod] Processing ${requests.length} pending requests for group ${groupId}`);
+
+            for (const req of requests) {
+                const userId = req.userId || req.user?.id;
+                const displayName = req.user?.displayName || 'Unknown';
+
+                if (!userId) {
+                    logger.warn('[AutoMod] Request missing userId, skipping');
+                    skipped++;
+                    continue;
+                }
+
+                const result = await processJoinRequest(groupId, userId, displayName, req.user);
+                
+                if (result.processed) {
+                    totalProcessed++;
+                    if (result.action === 'accept') accepted++;
+                    else if (result.action === 'reject') rejected++;
+                } else {
+                    skipped++;
+                }
+
+                // Small delay between requests to avoid rate limiting
+                await new Promise(r => setTimeout(r, 500));
+            }
+        } catch (e) {
+            logger.error(`[AutoMod] Error fetching requests for group ${groupId}:`, e);
+        }
+    }
+
+    logger.info(`[AutoMod] Gatekeeper processing complete: ${totalProcessed} processed (${accepted} accepted, ${rejected} rejected, ${skipped} skipped)`);
+    return { totalProcessed, accepted, rejected, skipped };
+};
+
+// Process a group join notification from WebSocket
+export const processGroupJoinNotification = async (notification: {
+    type?: string;
+    senderUserId?: string;
+    senderUsername?: string;
+    details?: {
+        groupId?: string;
+        groupName?: string;
+    };
+}): Promise<void> => {
+    // Check if this is a group join request notification
+    if (notification.type !== 'groupannouncement' && notification.type !== 'group.queueReady') {
+        return;
+    }
+
+    const groupId = notification.details?.groupId;
+    const userId = notification.senderUserId;
+    const displayName = notification.senderUsername || 'Unknown';
+
+    if (!groupId || !userId) {
+        logger.debug('[AutoMod] Notification missing groupId or userId, skipping');
+        return;
+    }
+
+    // Check if this group is authorized
+    if (!groupAuthorizationService.isGroupAllowed(groupId)) {
+        logger.debug(`[AutoMod] Notification for unauthorized group ${groupId}, skipping`);
+        return;
+    }
+
+    logger.info(`[AutoMod] Processing real-time join notification: ${displayName} for group ${groupId}`);
+    await processJoinRequest(groupId, userId, displayName);
+};
+
 // ... (rest of the file until setupAutoModHandlers)
 
 export const setupAutoModHandlers = () => {
@@ -145,6 +439,16 @@ export const setupAutoModHandlers = () => {
         return evaluateUser(user);
     });
 
+    ipcMain.handle('automod:test-notification', () => {
+        windowService.broadcast('automod:violation', {
+            displayName: 'Test User',
+            userId: 'usr_test',
+            action: 'REJECT',
+            reason: 'Test Rule Violation'
+        });
+        return true;
+    });
+
     // Helper to extract Group ID from current location
     const getCurrentGroupId = (): string | null => {
         // We can get this from LogWatcher or InstanceLogger
@@ -185,6 +489,28 @@ export const setupAutoModHandlers = () => {
             module: 'AutoMod',
             details: { ruleId: rule.id, config: rule.config }
         });
+
+        // NOTIFY RENDERER (TOAST)
+        // NOTIFY RENDERER (TOAST)
+        windowService.broadcast('automod:violation', {
+            displayName: player.displayName,
+            userId: player.userId,
+            action: rule.actionType,
+            reason: rule.name
+        });
+
+        // WEBHOOK
+        const actionColor = rule.actionType === 'REJECT' || rule.actionType === 'AUTO_BLOCK' ? 0xED4245 : 0xFEE75C;
+        discordWebhookService.sendEvent(
+            groupId,
+            `🛡️ AutoMod Violation: ${rule.actionType}`,
+            `**User**: ${player.displayName} (${player.userId})\n**Reason**: ${rule.name}`,
+            actionColor,
+            [
+                { name: 'Action Taken', value: rule.actionType, inline: true },
+                { name: 'Location', value: getCurrentGroupId() === groupId ? 'Current Group Instance' : 'Remote Request', inline: true }
+            ]
+        );
 
         if (rule.actionType === 'REJECT' || rule.actionType === 'AUTO_BLOCK') {
             try {

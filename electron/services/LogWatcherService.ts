@@ -5,6 +5,8 @@ import fs from 'fs';
 import path from 'path';
 import { EventEmitter } from 'events';
 import { oscService } from './OscService';
+import { discordBroadcastService } from './DiscordBroadcastService';
+import { windowService } from './WindowService';
 
 // ============================================
 // TYPES
@@ -80,13 +82,25 @@ class LogWatcherService extends EventEmitter {
     
     this.findLatestLog();
     
-    // Send one-time OSC connection message if OSC is enabled
+    // Send animated OSC connection sequence if OSC is enabled
     if (!this.hasAnnouncedConnection) {
       this.hasAnnouncedConnection = true;
       const oscConfig = oscService.getConfig();
       if (oscConfig.enabled) {
-        log.info('[LogWatcher] Sending OSC connection announcement');
-        oscService.send('/chatbox/input', ['Group Guard is connected to VRChat', true, false]);
+        log.info('[LogWatcher] Sending OSC connection announcement sequence');
+        
+        // Step 1: Initial connection message (1 second)
+        oscService.send('/chatbox/input', ['Group Guard connected to VRChat successfully!', true, false]);
+        
+        setTimeout(() => {
+          // Step 2: Loading message with typing indicator (2 seconds)
+          oscService.send('/chatbox/input', ['Initializing connection to VRChats logging service', true, true]); // true for typing indicator
+          
+          setTimeout(() => {
+            // Step 3: Final success message
+            oscService.send('/chatbox/input', ['VRChat Connected to Group Guard successfully!', true, false]);
+          }, 2000);
+        }, 1000);
       }
     }
     
@@ -246,6 +260,15 @@ class LogWatcherService extends EventEmitter {
             // Emit full location info - instanceId now includes all tags
             this.emitToRenderer('log:location', { worldId, instanceId, location, timestamp });
             this.emit('location', { worldId, instanceId, location, timestamp });
+
+            // UPDATE DISCORD
+            // Check if group instance? Not easy from just string, but we can pass generic info
+            if (instanceId.includes('~group(')) {
+                // Extract group ID roughly or just say "Group Instance"
+                 discordBroadcastService.updateGroupStatus("Group Instance", 0);
+            } else {
+                 discordBroadcastService.setIdle(); // Public instance
+            }
         }
     }
 
@@ -266,6 +289,12 @@ class LogWatcherService extends EventEmitter {
         this.state.currentWorldName = worldName;
         this.emitToRenderer('log:world-name', { name: worldName, timestamp });
         this.emit('world-name', { name: worldName, timestamp });
+
+        // If we are in a group instance (checked via boolean flag or store access, but let's just update)
+        // If current location implies group, update name
+        if (this.state.currentLocation && this.state.currentLocation.includes('~group(')) {
+             discordBroadcastService.updateGroupStatus(worldName, this.state.players.size);
+        }
     }
 
     // 3. Player Joined
@@ -280,6 +309,10 @@ class LogWatcherService extends EventEmitter {
         this.state.players.set(displayName, playerEvent);
         this.emitToRenderer('log:player-joined', playerEvent);
         this.emit('player-joined', playerEvent);
+
+        if (this.state.currentLocation && this.state.currentLocation.includes('~group(')) {
+            discordBroadcastService.updateGroupStatus(this.state.currentWorldName || 'Group Instance', this.state.players.size);
+        }
     }
 
     // 4. Player Left
@@ -298,17 +331,16 @@ class LogWatcherService extends EventEmitter {
              const finalId = entry.userId || userId;
              this.emitToRenderer('log:player-left', { displayName, userId: finalId, timestamp });
              this.emit('player-left', { displayName, userId: finalId, timestamp });
+
+             if (this.state.currentLocation && this.state.currentLocation.includes('~group(')) {
+                discordBroadcastService.updateGroupStatus(this.state.currentWorldName || 'Group Instance', this.state.players.size);
+             }
         }
     }
   }
 
   private emitToRenderer(channel: string, data: unknown) {
-    const windows = BrowserWindow.getAllWindows();
-    for (const win of windows) {
-      if (!win.isDestroyed()) {
-        win.webContents.send(channel, data);
-      }
-    }
+    windowService.broadcast(channel, data);
   }
   public getPlayers(): PlayerJoinedEvent[] {
       return Array.from(this.state.players.values());
