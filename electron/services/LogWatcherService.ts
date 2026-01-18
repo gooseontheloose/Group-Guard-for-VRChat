@@ -9,8 +9,10 @@ import { oscService } from './OscService';
 import { discordBroadcastService } from './DiscordBroadcastService';
 import { windowService } from './WindowService';
 import { processService } from './ProcessService';
+// Pure parsing utilities available in LogParserService for testing
 
 const store = new Store();
+
 
 // ============================================
 // TYPES
@@ -159,6 +161,14 @@ class LogWatcherService extends EventEmitter {
             this.seekingInstanceId = apiLoc;
             this.seekingStartTime = Date.now();
             log.info(`[LogWatcher] Smart Sync: Seeking session start for ${apiLoc}`);
+            
+            // IMMEDIATE EMISSION: Send the location right away so roaming mode shows instantly
+            // Smart Sync will continue refining (finding log join entry) in the background
+            const worldId = apiLoc.split(':')[0];
+            this.state.currentWorldId = worldId;
+            this.state.currentLocation = apiLoc;
+            this.emitToRenderer('log:location', { worldId, instanceId: apiLoc, location: apiLoc, timestamp: new Date().toISOString() });
+            log.info(`[LogWatcher] Smart Sync: Pre-emitted location ${apiLoc} for immediate UI update`);
         }
     } catch (e) {
         log.warn('[LogWatcher] Smart Sync check failed', e);
@@ -322,7 +332,6 @@ class LogWatcherService extends EventEmitter {
         const latest = files[0];
         if (latest.path !== this.currentLogPath) {
           log.info(`[LogWatcher] Found new log file: ${latest.name}`);
-          console.log(`[LogWatcher] Found new log file: ${latest.name} (Size: ${latest.stat.size})`);
           this.currentLogPath = latest.path;
           this.currentFileSize = 0; 
           this.state = { currentWorldId: null, currentWorldName: null, currentLocation: null, players: new Map() };
@@ -501,6 +510,11 @@ class LogWatcherService extends EventEmitter {
         
         log.info(`[LogWatcher] MATCH Joining: ${location}`);
         
+        // DEBUG: Fetch API location to compare
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { fetchCurrentLocationFromApi } = require('./AuthService');
+        fetchCurrentLocationFromApi().catch((err: unknown) => log.error('[DEBUG_COMPARE] Failed to fetch API location', err));
+
         if (this.state.currentLocation !== location) {
             log.info(`[LogWatcher] Location CHANGED from ${this.state.currentLocation} to ${location}`);
             this.state.players.clear();

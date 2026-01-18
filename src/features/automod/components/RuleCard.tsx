@@ -10,7 +10,6 @@ interface RuleCardProps {
     color: string;
     actionLabel?: string;
     onAction?: (e: React.MouseEvent) => void;
-    children?: React.ReactNode;
 }
 
 export const RuleCard: React.FC<RuleCardProps> = ({ 
@@ -21,8 +20,7 @@ export const RuleCard: React.FC<RuleCardProps> = ({
     icon, 
     color,
     actionLabel,
-    onAction,
-    children
+    onAction
 }) => {
     return (
         <motion.div 

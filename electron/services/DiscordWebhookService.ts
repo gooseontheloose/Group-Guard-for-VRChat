@@ -16,6 +16,16 @@ const store = new Store<WebhookConfigStore>({
     }
 });
 
+export interface WebhookEventData {
+    title: string;
+    description?: string;
+    type: 'SUCCESS' | 'WARNING' | 'ERROR' | 'INFO';
+    fields?: { name: string; value: string; inline?: boolean }[];
+    targetUser?: { displayName: string; id: string; avatarUrl?: string };
+    actor?: { displayName: string; id: string; avatarUrl?: string };
+    footer?: string;
+}
+
 export class DiscordWebhookService {
 
     constructor() {}
@@ -34,29 +44,82 @@ export class DiscordWebhookService {
     }
 
     public async sendTestMessage(groupId: string) {
-        const url = this.getWebhook(groupId);
-        if (!url) throw new Error("No webhook configured for this group.");
-
-        await this.postToDiscord(url, {
-            content: "Group Guard webhook test successful"
+        await this.sendEvent(groupId, {
+            title: 'Webhook Test',
+            description: 'Your Group Guard webhook is configured correctly!',
+            type: 'SUCCESS',
+            fields: [
+                { name: 'Status', value: 'Active', inline: true },
+                { name: 'Group ID', value: groupId, inline: true }
+            ],
+            footer: 'Group Guard System'
         });
     }
 
-    public async sendEvent(groupId: string, title: string, description: string, color: number = 0x5865F2, fields: {name: string, value: string, inline?: boolean}[] = []) {
-        const url = this.getWebhook(groupId);
-        if (!url) return; // No webhook, silent fail
+    public async sendMockBan(groupId: string) {
+        await this.sendEvent(groupId, {
+            title: '🚫 User Banned (Simulation)',
+            description: 'This is a **simulation** of a ban event. No actual user was banned.',
+            type: 'ERROR',
+            fields: [
+                { name: 'User', value: '[BadActor123](https://vrchat.com)', inline: true },
+                { name: 'Reason', value: 'Harassment / AutoMod', inline: true },
+                { name: 'Admin', value: 'Group Guard System', inline: true }
+            ],
+            targetUser: {
+                 displayName: 'BadActor123',
+                 id: 'usr_fake_12345',
+                 avatarUrl: 'https://assets.vrchat.com/www/brand/vrchat-logo-white-transparent.png' 
+            },
+            footer: 'Group Guard Simulation'
+        });
+    }
 
-        const embed = {
-            title,
-            description,
-            color,
-            fields,
+    public async sendEvent(groupId: string, data: WebhookEventData) {
+        const url = this.getWebhook(groupId);
+        if (!url) {
+            logger.warn(`No webhook URL configured for group ${groupId}, skipping event: ${data.title}`);
+            return;
+        }
+
+        logger.info(`Sending webhook event for group ${groupId}:`, JSON.stringify(data, null, 2));
+
+        // Map type to color
+        const colors: Record<string, number> = {
+            'SUCCESS': 0x57F287, // Green
+            'WARNING': 0xFEE75C, // Yellow
+            'ERROR': 0xED4245,   // Red
+            'INFO': 0x5865F2     // Blurple
+        };
+
+        const color = colors[data.type] || colors['INFO'];
+
+        const embed: any = {
+            title: data.title,
+            description: data.description,
+            color: color,
+            fields: data.fields || [],
             footer: {
-                text: "VRChat Group Guard",
+                text: data.footer || "VRChat Group Guard",
                 icon_url: "https://assets.vrchat.com/www/brand/vrchat-logo-white-transparent.png"
             },
             timestamp: new Date().toISOString()
         };
+
+        // Add Thumbnail (Target User)
+        if (data.targetUser?.avatarUrl) {
+            embed.thumbnail = { url: data.targetUser.avatarUrl };
+        }
+
+        // Add Author (Actor)
+        if (data.actor) {
+            embed.author = {
+                name: data.actor.displayName,
+                icon_url: data.actor.avatarUrl
+            };
+        }
+
+        logger.info('Constructed Embed:', JSON.stringify(embed, null, 2));
 
         try {
             await this.postToDiscord(url, { embeds: [embed] });
@@ -98,6 +161,11 @@ export function setupDiscordWebhookHandlers() {
 
     ipcMain.handle('webhook:test', async (_e, { groupId }: { groupId: string }) => {
         await discordWebhookService.sendTestMessage(groupId);
+        return true;
+    });
+
+    ipcMain.handle('webhook:test-mock', async (_e, { groupId }: { groupId: string }) => {
+        await discordWebhookService.sendMockBan(groupId);
         return true;
     });
 }

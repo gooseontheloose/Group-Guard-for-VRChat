@@ -7,6 +7,7 @@ import styles from './AutoModView.module.css';
 
 // Extracted components
 import { KeywordConfigModal } from './dialogs/KeywordConfigModal';
+import { BlacklistedGroupsConfigModal } from './dialogs/BlacklistedGroupsConfigModal';
 import { UserActionModal } from './dialogs/UserActionModal';
 import { RuleCard } from './components/RuleCard';
 import { InterceptionLog, type LogEntry } from './components/InterceptionLog';
@@ -25,10 +26,12 @@ const containerVariants = {
 };
 
 export const AutoModView: React.FC = () => {
+    const [status, setStatus] = useState({ autoReject: false, autoBan: false });
     const [rules, setRules] = useState<AutoModRule[]>([]);
     
     // Dialog State
     const [showKeywordConfig, setShowKeywordConfig] = useState(false);
+    const [showBlacklistedGroupsConfig, setShowBlacklistedGroupsConfig] = useState(false);
     const [interceptionLog, setInterceptionLog] = useState<LogEntry[]>([]);
     const [selectedLogEntry, setSelectedLogEntry] = useState<LogEntry | null>(null);
 
@@ -50,10 +53,20 @@ export const AutoModView: React.FC = () => {
             console.error("Failed to load AutoMod rules", e);
         }
     };
+
+    const loadStatus = async () => {
+        try {
+            const s = await window.electron.automod.getStatus();
+            setStatus(s);
+        } catch (e) {
+            console.error("Failed to load AutoMod status", e);
+        }
+    };
     
     React.useEffect(() => {
         loadRules();
         loadHistory();
+        loadStatus();
         
         // Listen for AutoMod Logs (real-time)
         const handleLog = (_: unknown, log: unknown) => {
@@ -65,6 +78,18 @@ export const AutoModView: React.FC = () => {
         });
         return () => removeListener();
     }, []);
+
+    const toggleAutoReject = async () => {
+        const newState = !status.autoReject;
+        await window.electron.automod.setAutoReject(newState);
+        loadStatus();
+    };
+
+    const toggleAutoBan = async () => {
+        const newState = !status.autoBan;
+        await window.electron.automod.setAutoBan(newState);
+        loadStatus();
+    };
 
     const toggleRule = async (type: string, config?: Record<string, unknown>) => {
         const existing = rules.find(r => r.type === type);
@@ -81,11 +106,19 @@ export const AutoModView: React.FC = () => {
             };
         } else if (type === 'AGE_VERIFICATION') {
             initialConfig = { autoAcceptVerified: false };
+        } else if (type === 'BLACKLISTED_GROUPS') {
+            initialConfig = { groupIds: [], groups: [] };
         }
+
+        const ruleNames: Record<string, string> = {
+            'AGE_VERIFICATION': 'Age Verification Firewall',
+            'KEYWORD_BLOCK': 'Keyword Text Filter',
+            'BLACKLISTED_GROUPS': 'Blacklisted Groups'
+        };
 
         const newRule = {
             id: existing?.id || 0,
-            name: type === 'AGE_VERIFICATION' ? 'Age Verification Firewall' : (type === 'KEYWORD_BLOCK' ? 'Keyword Text Filter' : 'Unknown Rule'),
+            name: ruleNames[type] || 'Unknown Rule',
             type: type as AutoModRule['type'],
             enabled: config ? (existing ? existing.enabled : true) : (!existing?.enabled),
             actionType: 'REJECT' as const,
@@ -104,6 +137,11 @@ export const AutoModView: React.FC = () => {
     const keywordConfig = keywordRule ? JSON.parse(keywordRule.config || '{}') : {};
     
     const isKeywordConfigured = (keywordConfig.keywords && keywordConfig.keywords.length > 0);
+
+    const blacklistRule = rules.find(r => r.type === 'BLACKLISTED_GROUPS');
+    const isBlacklistEnabled = blacklistRule?.enabled;
+    const blacklistConfig = blacklistRule ? JSON.parse(blacklistRule.config || '{}') : { groupIds: [], groups: [] };
+    const isBlacklistConfigured = (blacklistConfig.groupIds && blacklistConfig.groupIds.length > 0);
 
     const { fetchLogs } = useAuditStore();
     const { selectedGroup, fetchGroupBans, fetchGroupMembers } = useGroupStore();
@@ -145,9 +183,9 @@ export const AutoModView: React.FC = () => {
                         />
                          <StatTile 
                             label="STATUS"
-                            value="ACTIVE"
-                            color="var(--color-success)"
-                            headerRight={<span className="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-[0_0_10px_#4ade80]"></span>}
+                            value={status.autoReject || status.autoBan ? "ACTIVE" : "STANDBY"}
+                            color={status.autoReject || status.autoBan ? "var(--color-success)" : "var(--color-text-dim)"}
+                            headerRight={(status.autoReject || status.autoBan) && <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-[0_0_10px_#4ade80]"></span>}
                         />
                     </div>
                 </GlassPanel>
@@ -166,6 +204,29 @@ export const AutoModView: React.FC = () => {
                     {/* Right: Rules & Config */}
                     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                         
+                         {/* Safety Settings */}
+                         <GlassPanel style={{ display: 'flex', flexDirection: 'column', gap: '1rem', padding: '1.5rem', flexShrink: 0 }}>
+                            <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>Safety Settings</h3>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                <RuleCard
+                                    title="Auto Process Join Requests"
+                                    statusLabel={status.autoReject ? 'ON' : 'OFF'}
+                                    isEnabled={status.autoReject}
+                                    onToggle={toggleAutoReject}
+                                    color="var(--color-primary)"
+                                    icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="8.5" cy="7" r="4"></circle><line x1="23" y1="11" x2="17" y2="11"></line></svg>}
+                                />
+                                <RuleCard
+                                    title="Auto-Ban Non-Compliant Users"
+                                    statusLabel={status.autoBan ? 'ON' : 'OFF'}
+                                    isEnabled={status.autoBan}
+                                    onToggle={toggleAutoBan}
+                                    color="var(--color-danger)"
+                                    icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6L6 18M6 6l12 12"></path></svg>}
+                                />
+                            </div>
+                         </GlassPanel>
+
                          <GlassPanel style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem', padding: '1.5rem', overflowY: 'auto' }}>
                             <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 600 }}>Active Rules</h3>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
@@ -191,20 +252,17 @@ export const AutoModView: React.FC = () => {
                                     onAction={() => setShowKeywordConfig(true)}
                                 />
 
-                                <div style={{ 
-                                    padding: '1rem', 
-                                    border: '1px dashed rgba(255,255,255,0.1)', 
-                                    borderRadius: '8px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    color: 'var(--color-text-dim)',
-                                    fontSize: '0.85rem',
-                                    fontStyle: 'italic',
-                                    marginTop: '0.5rem'
-                                }}>
-                                    More rules coming soon...
-                                </div>
+                                {/* Blacklisted Groups Rule Card */}
+                                <RuleCard
+                                    title="Blacklisted Groups"
+                                    statusLabel={isBlacklistEnabled ? 'ON' : 'OFF'}
+                                    isEnabled={!!isBlacklistEnabled}
+                                    onToggle={() => toggleRule('BLACKLISTED_GROUPS')}
+                                    color="#f97316"
+                                    icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><line x1="23" y1="1" x2="17" y2="7"></line><line x1="17" y1="1" x2="23" y2="7"></line></svg>}
+                                    actionLabel={isBlacklistConfigured ? 'Configure' : 'Setup'}
+                                    onAction={() => setShowBlacklistedGroupsConfig(true)}
+                                />
                             </div>
                         </GlassPanel>
                     </div>
@@ -217,6 +275,13 @@ export const AutoModView: React.FC = () => {
                 onClose={() => setShowKeywordConfig(false)}
                 config={keywordConfig} 
                 onUpdate={(newConfig) => toggleRule('KEYWORD_BLOCK', newConfig)}
+            />
+
+            <BlacklistedGroupsConfigModal
+                isOpen={showBlacklistedGroupsConfig}
+                onClose={() => setShowBlacklistedGroupsConfig(false)}
+                config={blacklistConfig}
+                onUpdate={(newConfig) => toggleRule('BLACKLISTED_GROUPS', newConfig as unknown as Record<string, unknown>)}
             />
 
             <UserActionModal

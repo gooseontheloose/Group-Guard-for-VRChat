@@ -7,4 +7,41 @@
   box-shadow: 0 4px 30px rgba(0, 0, 0, 0.5);
   padding: 1rem;
   overflow: hidden;
+  position: relative;
+  /* Initialize glow variables */
+  --glow-x: 50%;
+  --glow-y: 50%;
+  --glow-opacity: 0;
+}
+
+/* Cursor-tracking radial glow */
+.glassCard::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: calc(var(--glow-opacity) * 0.15);
+  background: radial-gradient(
+    600px circle at var(--glow-x) var(--glow-y),
+    var(--color-primary-glow),
+    transparent 40%
+  );
+  transition: opacity 0.3s ease;
+  z-index: 0;
+}
+
+/* Gradient focus border */
+.glassCard:focus-visible {
+  outline: none;
+  border-color: transparent;
+  background-image: var(--focus-gradient);
+  background-origin: border-box;
+  background-clip: padding-box, border-box;
+  box-shadow: var(--focus-glow), 0 4px 30px rgba(0, 0, 0, 0.5);
+}
+
+/* Ensure content is above glow */
+.glassCard > * {
+  position: relative;
+  z-index: 1;
 }

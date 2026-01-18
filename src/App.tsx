@@ -9,7 +9,6 @@ import { useAuthStore } from './stores/authStore';
 import { useGroupStore } from './stores/groupStore';
 import { AnimatePresence } from 'framer-motion';
 import { NeonDock, type DockView } from './components/layout/NeonDock';
-import { usePipelineStore } from './stores/pipelineStore';
 import { usePipelineInit } from './hooks/usePipelineInit';
 import { useInstanceMonitorInit } from './hooks/useInstanceMonitorInit';
 import { useAutoModNotifications } from './hooks/useAutoModNotifications';
@@ -35,7 +34,6 @@ import { AutoLoginLoadingScreen } from './features/auth/AutoLoginLoadingScreen';
 function App() {
   const { isAuthenticated, autoLogin, status, logout } = useAuthStore();
   const { selectedGroup, selectGroup, isRoamingMode } = useGroupStore();
-  const connected = usePipelineStore(state => state.connected); // Connection to backend pipeline
   const [isCheckingAutoLogin, setIsCheckingAutoLogin] = useState(true);
   const [isStorageConfigured, setIsStorageConfigured] = useState<boolean | null>(null);
   const [currentView, setCurrentView] = useState<DockView>('main');
@@ -75,15 +73,9 @@ function App() {
   }, []);
 
   // Monitor Live Log state to toggle Live Mode UI
+  // Note: This effect runs the live status check regardless of pipeline connection
+  // because the log watcher operates independently of the VRChat API pipeline.
   useEffect(() => {
-    if (!connected) {
-        if (isLiveMode) {
-          const timeoutId = setTimeout(() => setIsLiveMode(false), 0);
-          return () => clearTimeout(timeoutId);
-        }
-        return;
-    }
-
     if (isRoamingMode) {
       if (!isLiveMode) {
          const t = setTimeout(() => setIsLiveMode(true), 0);
@@ -124,7 +116,6 @@ function App() {
     let unsubscribeGameClosed: (() => void) | undefined;
     if (window.electron?.logWatcher?.onGameClosed) {
         unsubscribeGameClosed = window.electron.logWatcher.onGameClosed(() => {
-            console.log('[App] Game closed detected, exiting live mode');
             setIsLiveMode(false);
         });
     }
@@ -133,12 +124,11 @@ function App() {
         unsubscribeGroupChange?.();
         unsubscribeGameClosed?.();
     };
-  }, [selectedGroup, isRoamingMode, isLiveMode, connected]);
+  }, [selectedGroup, isRoamingMode, isLiveMode]);
 
   // Redirect from Live view when Live mode ends (smooth transition)
   useEffect(() => {
     if (!isLiveMode && !isRoamingMode && currentView === 'live') {
-      console.log('[App] Live mode ended while on Live view, redirecting to dashboard');
       const t = setTimeout(() => {
         if (selectedGroup) {
           setCurrentView('main'); // Go to group dashboard
@@ -236,6 +226,7 @@ function App() {
         return <WatchlistView />;
       case 'database':
         return <DatabaseView />;
+
       case 'main':
       default:
         return selectedGroup ? <DashboardView /> : <GroupSelectionView />;

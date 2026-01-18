@@ -17,30 +17,30 @@ export const KeywordConfigModal: React.FC<KeywordConfigModalProps> = ({ isOpen, 
     return createPortal(
         <AnimatePresence>
             {isOpen && (
-                <>
-                    {/* Backdrop */}
+                <motion.div
+                    key="backdrop"
+                    initial={{ opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    onClick={onClose}
+                    style={{
+                        position: 'fixed',
+                        inset: 0,
+                        background: 'rgba(0,0,0,0.7)',
+                        backdropFilter: 'blur(4px)',
+                        zIndex: 9999,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        paddingBottom: '50px'
+                    }}
+                >
+                    {/* Modal Content */}
                     <motion.div
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        onClick={onClose}
-                        style={{
-                            position: 'fixed',
-                            inset: 0,
-                            background: 'rgba(0,0,0,0.7)',
-                            backdropFilter: 'blur(4px)',
-                            zIndex: 9999,
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            paddingBottom: '50px'
-                        }}
-                    >
-                        {/* Modal Content */}
-                        <motion.div
-                            initial={{ scale: 0.95, opacity: 0 }}
-                            animate={{ scale: 1, opacity: 1 }}
-                            exit={{ scale: 0.95, opacity: 0 }}
+                        key="modal-content"
+                        initial={{ scale: 0.95, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        exit={{ scale: 0.95, opacity: 0 }}
                             onClick={e => e.stopPropagation()}
                             style={{ 
                                 width: '90%', 
@@ -255,8 +255,7 @@ export const KeywordConfigModal: React.FC<KeywordConfigModalProps> = ({ isOpen, 
                             </GlassPanel>
                         </motion.div>
                     </motion.div>
-                </>
-            )}
+                )}
         </AnimatePresence>,
         document.body
     );

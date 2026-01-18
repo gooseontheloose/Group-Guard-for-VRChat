@@ -51,7 +51,15 @@ class GroupAuthorizationService {
     constructor() {
         // Listen for group updates from GroupService
         serviceEventBus.on('groups-updated', (payload) => {
-             const groupIds = payload.groups.map(g => g.id);
+             logger.info(`[SECURITY] Received groups-updated event with ${payload.groups?.length || 0} groups`);
+             // Debug: Log raw group data to identify mapping issues
+             payload.groups?.forEach((g: { id?: string; groupId?: string; name?: string }, i: number) => {
+                 logger.debug(`[SECURITY] Group ${i}: id=${g.id}, groupId=${g.groupId}, name=${g.name}`);
+             });
+             const groupIds = payload.groups
+                 .map((g: { id?: string }) => g.id)
+                 .filter((id): id is string => !!id);
+             logger.info(`[SECURITY] Extracted group IDs: ${JSON.stringify(groupIds)}`);
              this.setAllowedGroups(groupIds);
         });
     }

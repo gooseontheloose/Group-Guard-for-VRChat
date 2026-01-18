@@ -15,7 +15,7 @@ interface DockItemProps {
 export const DockItem = memo<DockItemProps>(({ label, isActive, onClick, icon, color = 'var(--color-primary)' }) => {
   // Handle both raw ReactNode (legacy) and LucideIcon types if passed as component
   const isElement = React.isValidElement(icon);
-  const IconComponent = icon;
+  const IconComponent = icon as LucideIcon;
 
   return (
     <button

@@ -3,7 +3,8 @@ import Store from 'electron-store';
 import log from 'electron-log';
 import { logWatcherService, PlayerJoinedEvent, LocationEvent } from './LogWatcherService';
 import { oscService } from './OscService';
-import { getVRChatClient } from './AuthService';
+import { vrchatApiService } from './VRChatApiService';
+import { userProfileService } from './UserProfileService';
 
 const logger = log.scope('OscAnnouncementService');
 
@@ -105,13 +106,10 @@ class OscAnnouncementService {
 
     private async updateGroupName(groupId: string) {
         try {
-            const client = getVRChatClient();
-            if (client) {
-                const response = await client.getGroup({ path: { groupId } });
-                if (!response.error && response.data) {
-                    this.activeGroupName = response.data.name;
-                    logger.info(`Updated active group name to: ${this.activeGroupName}`);
-                }
+            const result = await vrchatApiService.getGroupDetails(groupId);
+            if (result.success && result.data) {
+                this.activeGroupName = result.data.name;
+                logger.info(`Updated active group name to: ${this.activeGroupName}`);
             }
         } catch (e) {
             logger.warn(`Failed to fetch group name for ${groupId}`, e);
@@ -161,15 +159,15 @@ class OscAnnouncementService {
             let messageType = 'default';
             
             try {
-                const client = getVRChatClient();
+                const client = vrchatApiService.getClient();
                 if (client && event.userId && this.activeGroupId) {
                     // 1. First check if user is REPRESENTING the group
                     if (currentConfig.greetingMessageRep && currentConfig.greetingMessageRep.trim() !== '') {
                         try {
-                            const repResponse = await client.get('/users/{userId}/groups/represented', {
-                                params: { path: { userId: event.userId } }
-                            });
-                            if (repResponse.data && (repResponse.data as { groupId?: string }).groupId === this.activeGroupId) {
+                            const userGroups = await userProfileService.getUserGroups(event.userId);
+                            const representingGroup = userGroups.find(g => g.groupId === this.activeGroupId && g.isRepresenting);
+                            
+                            if (representingGroup) {
                                 message = currentConfig.greetingMessageRep;
                                 messageType = 'rep';
                                 logger.info(`${event.displayName} is representing the group! Using rep message.`);

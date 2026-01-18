@@ -9,6 +9,10 @@
   --accent-sat: 100%;
   --accent-light: 60%;
 
+  --tertiary-hue: 270; /* Neon Purple */
+  --tertiary-sat: 80%;
+  --tertiary-light: 60%;
+
   --bg-hue: 240; /* Dark Blue-Black */
   --bg-sat: 20%;
   --bg-light: 5%;
@@ -30,11 +34,35 @@
     var(--accent-sat),
     var(--accent-light)
   );
+  --color-accent-glow: hsl(
+    var(--accent-hue),
+    var(--accent-sat),
+    var(--accent-light),
+    0.5
+  );
+  --color-tertiary: hsl(
+    var(--tertiary-hue),
+    var(--tertiary-sat),
+    var(--tertiary-light)
+  );
+  --color-tertiary-glow: hsl(
+    var(--tertiary-hue),
+    var(--tertiary-sat),
+    var(--tertiary-light),
+    0.4
+  );
 
   --color-bg-app: hsl(var(--bg-hue), var(--bg-sat), var(--bg-light));
   --color-bg-panel: hsla(var(--bg-hue), var(--bg-sat), 10%, 0.45); /* Glass */
   --color-text-main: #ffffff;
   --color-text-dim: rgba(255, 255, 255, 0.6);
+
+  /* --- GRADIENTS --- */
+  --gradient-primary: linear-gradient(135deg, var(--color-primary) 0%, var(--color-accent) 100%);
+  --gradient-secondary: linear-gradient(135deg, var(--color-accent) 0%, var(--color-tertiary) 100%);
+  --gradient-glow: linear-gradient(135deg, var(--color-primary-glow), var(--color-accent-glow));
+  --gradient-dark: linear-gradient(180deg, rgba(0,0,0,0) 0%, rgba(0,0,0,0.8) 100%);
+  --gradient-shimmer: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.1) 50%, transparent 100%);
 
   /* --- AESTHETICS --- */
   --glass-blur: 20px;
@@ -46,6 +74,8 @@
   /* --- ANIMATION --- */
   --transition-fast: 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
   --transition-slow: 0.5s cubic-bezier(0.2, 0.8, 0.2, 1);
+  --spring-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --spring-smooth: cubic-bezier(0.2, 0.8, 0.2, 1);
 
   /* --- SEMANTIC COLORS --- */
   --color-success: #22c55e;
@@ -83,6 +113,34 @@
   --font-weight-regular: 400;
   --font-weight-medium: 500;
   --font-weight-bold: 700;
+
+  /* --- VISUAL EFFECTS --- */
+  --focus-gradient: linear-gradient(135deg, var(--color-primary), var(--color-accent));
+  --focus-glow: 0 0 0 3px hsla(var(--primary-hue), var(--primary-sat), var(--primary-light), 0.3);
+  --glow-sm: 0 0 10px;
+  --glow-md: 0 0 20px;
+  --glow-lg: 0 0 40px;
+}
+
+/* Pulse Animation for Real-Time Data */
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 0.7;
+  }
+}
+
+@keyframes glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 4px var(--color-primary-glow);
+  }
+  50% {
+    box-shadow: 0 0 12px var(--color-primary-glow), 0 0 20px var(--color-primary-glow);
+  }
 }
 
 /* Dark Mode Defaults (Hardcoded for now, can be swapped via class) */

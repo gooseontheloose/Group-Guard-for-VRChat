@@ -1,11 +1,18 @@
 /src/generated/prisma
 
-# Environment Variables (Permissions & Secrets)
+# Environment Variables
 .env
-.env.production
-.env.development
+.env.*
+.env.local
 
-# Build Output
+# ============================================
+# SECRETS - All sensitive files go here
+# ============================================
+SENSITIVE/
+
+# ============================================
+# BUILD OUTPUT
+# ============================================
 dist
 dist-electron
 release

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { UserProfileWidget } from '../../features/auth/UserProfileWidget';
 // AccountSwitcher removed
@@ -15,6 +15,39 @@ interface TitleBarProps {
 export const TitleBar: React.FC<TitleBarProps> = ({ onSettingsClick, onLogoutClick }) => {
   const { user } = useAuthStore();
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isProfileOpen) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!dropdownRef.current) return;
+
+      const rect = dropdownRef.current.getBoundingClientRect();
+      const x = e.clientX;
+      const y = e.clientY;
+
+      // Calculate distance to the rectangle
+      let dx = 0;
+      let dy = 0;
+
+      if (x < rect.left) dx = rect.left - x;
+      else if (x > rect.right) dx = x - rect.right;
+
+      if (y < rect.top) dy = rect.top - y;
+      else if (y > rect.bottom) dy = y - rect.bottom;
+
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      // Close if cursor is more than 150px away
+      if (distance > 150) {
+        setIsProfileOpen(false);
+      }
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    return () => document.removeEventListener('mousemove', handleMouseMove);
+  }, [isProfileOpen]);
 
   return (
     <header className={styles.titleBar}>
@@ -45,6 +78,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ onSettingsClick, onLogoutCli
                           exit={{ opacity: 0, y: -10, scale: 0.95 }}
                           transition={{ type: "spring" as const, stiffness: 300, damping: 24 }}
                           className={styles.dropdown}
+                          ref={dropdownRef}
                       >
                            <div style={{ marginBottom: '0.8rem' }}>
                               <UserProfileWidget />

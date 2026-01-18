@@ -1,7 +1,8 @@
 import { ipcMain } from 'electron';
 import log from 'electron-log';
 const logger = log.scope('GroupService');
-import { getVRChatClient, getCurrentUserId, getAuthCookieString } from './AuthService';
+import { getVRChatClient, getCurrentUserId, getAuthCookieStringAsync, getAuthCookieString } from './AuthService';
+import { vrchatApiService } from './VRChatApiService';
 import { databaseService } from './DatabaseService';
 import { groupAuthorizationService } from './GroupAuthorizationService';
 import { networkService } from './NetworkService';
@@ -155,8 +156,8 @@ export function setupGroupHandlers() {
       return [];
   };
 
-  // Search group members (fetches members and filters client-side)
-  ipcMain.handle('groups:search-members', async (_event, { groupId, query, n = 15 }: { groupId: string; query: string; n?: number }) => {
+  // Search group members (Server-side)
+  ipcMain.handle('groups:search-members', async (_event, { groupId, query, n = 50 }: { groupId: string; query: string; n?: number }) => {
       // SECURITY: Validate group access
       groupAuthorizationService.validateAccess(groupId, 'groups:search-members');
       
@@ -164,53 +165,35 @@ export function setupGroupHandlers() {
           const client = getVRChatClient();
           if (!client) throw new Error("Not authenticated");
           
-          const searchQuery = query.toLowerCase().trim();
-          logger.info(`Searching members in group ${groupId} for "${searchQuery}"`);
+          const searchQuery = query.trim();
+          if (!searchQuery) return { members: [] };
+
+          logger.info(`Searching members in group ${groupId} for "${searchQuery}" (server-side)`);
           
-          // Fetch a larger batch of members to search through
-          const allMembers: unknown[] = [];
-          const batchSize = 100;
-          const maxBatches = 5; // Up to 500 members
+          // Use direct fetch with explicit cookie headers - axios instance doesn't reliably pass auth
+          // Endpoint: /groups/{groupId}/members/search?query={query}&n={n}
+          const cookies = await getAuthCookieStringAsync();
+          logger.info(`Searching with native fetch. Cookie present: ${!!cookies} (Length: ${cookies?.length || 0})`);
           
-          for (let batch = 0; batch < maxBatches; batch++) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const response = await (client as any).getGroupMembers({ 
-              path: { groupId },
-              query: { n: batchSize, offset: batch * batchSize }
-            });
-            
-            if (response.error) throw response.error;
-            
-            const members = response.data ?? [];
-            if (members.length === 0) break; // No more members
-            allMembers.push(...members);
-            
-            interface MemberData {
-              user?: { displayName?: string; username?: string; };
-            }
-            const matches = allMembers.filter((m: unknown) => {
-              const member = m as MemberData;
-              const displayName = member.user?.displayName?.toLowerCase() || '';
-              const username = member.user?.username?.toLowerCase() || '';
-              return displayName.includes(searchQuery) || username.includes(searchQuery);
-            });
-            
-            if (matches.length >= n) break;
-            if (members.length < batchSize) break;
+          const url = `https://api.vrchat.cloud/api/1/groups/${groupId}/members/search?query=${encodeURIComponent(searchQuery)}&n=${n}`;
+          const response = await fetch(url, {
+             method: 'GET',
+             headers: {
+                 'Cookie': cookies || '',
+                 'User-Agent': 'VRChatGroupGuard/1.0.0 (admin@groupguard.app)',
+                 'Content-Type': 'application/json'
+             }
+          });
+          
+          if (!response.ok) {
+             const text = await response.text();
+             logger.error(`Fetch API Error: ${response.status} ${text}`);
+             throw new Error(`API Error: ${response.status} ${text}`);
           }
           
-          // Filter and limit results
-          interface MemberData {
-            user?: { displayName?: string; username?: string; };
-          }
-          const filteredMembers = allMembers.filter((m: unknown) => {
-            const member = m as MemberData;
-            const displayName = member.user?.displayName?.toLowerCase() || '';
-            const username = member.user?.username?.toLowerCase() || '';
-            return displayName.includes(searchQuery) || username.includes(searchQuery);
-          }).slice(0, n);
-          
-          return { members: filteredMembers };
+          const data = await response.json();
+          return { members: extractArray(data) };
+
       }, `groups:search-members:${groupId}`).then(res => {
           if (res.success) return { success: true, members: res.data?.members };
           return { success: false, error: res.error };
@@ -308,10 +291,10 @@ export function setupGroupHandlers() {
                   type: log.eventType || 'unknown', // Map eventType to type
                   eventType: log.eventType,
                   // Ensure other fields are present/flat
-                  actorId: log.actorId || log.actor?.id,
-                  actorDisplayName: log.actorDisplayName || log.actor?.displayName,
-                  targetId: log.targetId || log.target?.id,
-                  targetDisplayName: log.targetDisplayName || log.target?.displayName,
+                  actorId: log.actorId || (log.actor as { id: string })?.id,
+                  actorDisplayName: log.actorDisplayName || (log.actor as { displayName: string })?.displayName,
+                  targetId: log.targetId || (log.target as { id: string })?.id,
+                  targetDisplayName: log.targetDisplayName || (log.target as { displayName: string })?.displayName,
                   created_at: log.created_at || log.createdAt
               };});
           }
@@ -472,9 +455,15 @@ export function setupGroupHandlers() {
         
         discordWebhookService.sendEvent(
             groupId,
-            '🚫 User Banned (Manual)',
-            `**User**: ${userId}\n**Action**: Banned via Dashboard\n**Admin**: ${getCurrentUserId()}`,
-            0xED4245
+            {
+                title: '🚫 User Banned (Manual)',
+                description: `User ${userId} was manually banned via the Group Guard Dashboard.`,
+                type: 'ERROR',
+                fields: [
+                    { name: 'User', value: `[${userId}](https://vrchat.com/home/user/${userId})`, inline: true },
+                    { name: 'Admin', value: getCurrentUserId() || 'Unknown', inline: true }
+                ]
+            }
         ).catch(e => logger.error('Webhook failed', e));
 
         return { success: true };
@@ -524,9 +513,15 @@ export function setupGroupHandlers() {
         if (res.success) {
              discordWebhookService.sendEvent(
                 groupId,
-                '🔓 User Unbanned (Manual)',
-                `**User**: ${userId}\n**Action**: Unbanned via Dashboard\n**Admin**: ${getCurrentUserId()}`,
-                0x57F287
+                {
+                    title: '🔓 User Unbanned (Manual)',
+                    description: `User ${userId} was manually unbanned via the Group Guard Dashboard.`,
+                    type: 'SUCCESS',
+                    fields: [
+                       { name: 'User', value: `[${userId}](https://vrchat.com/home/user/${userId})`, inline: true },
+                       { name: 'Admin', value: getCurrentUserId() || 'Unknown', inline: true }
+                    ]
+                }
             ).catch(e => logger.error('Webhook failed', e));
 
             return { success: true };
@@ -635,9 +630,16 @@ export function setupGroupHandlers() {
           if (res.success) {
                discordWebhookService.sendEvent(
                     groupId,
-                    '👮 Role Added',
-                    `**User**: ${userId}\n**Role ID**: ${roleId}\n**Admin**: ${getCurrentUserId()}`,
-                    0xFEE75C
+                    {
+                        title: '👮 Role Added',
+                        description: `Role added to user ${userId}.`,
+                        type: 'WARNING',
+                        fields: [
+                             { name: 'User', value: `[${userId}](https://vrchat.com/home/user/${userId})`, inline: true },
+                             { name: 'Role ID', value: roleId, inline: true },
+                             { name: 'Admin', value: getCurrentUserId() || 'Unknown', inline: true }
+                        ]
+                    }
                 ).catch(e => logger.error('Webhook failed', e));
               return { success: true };
           }
@@ -783,14 +785,20 @@ export function setupGroupHandlers() {
 
       return networkService.executeWithFallback(strategies, `groups:respond-request:${groupId}:${userId}`).then(res => {
           if (res.success) {
-               const color = action === 'accept' ? 0x57F287 : 0xED4245;
-               const title = action === 'accept' ? '✅ Join Request Accepted' : '❌ Join Request Denied';
+               const isAccept = action === 'accept';
                
                discordWebhookService.sendEvent(
                     groupId,
-                    title,
-                    `**User**: ${userId}\n**Action**: ${action.toUpperCase()} via Dashboard\n**Admin**: ${getCurrentUserId()}`,
-                    color
+                    {
+                        title: isAccept ? '✅ Join Request Accepted' : '❌ Join Request Denied',
+                        description: `Join request ${isAccept ? 'accepted' : 'denied'} by admin.`,
+                        type: isAccept ? 'SUCCESS' : 'ERROR',
+                        fields: [
+                             { name: 'User', value: `[${userId}](https://vrchat.com/home/user/${userId})`, inline: true },
+                             { name: 'Action', value: action.toUpperCase(), inline: true },
+                             { name: 'Admin', value: getCurrentUserId() || 'Unknown', inline: true }
+                        ]
+                    }
                 ).catch(e => logger.error('Webhook failed', e));
               
               return { success: true };

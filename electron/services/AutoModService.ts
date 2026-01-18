@@ -4,16 +4,17 @@ import fs from 'fs';
 import path from 'path';
 import log from 'electron-log';
 import { getVRChatClient } from './AuthService';
+import { vrchatApiService } from './VRChatApiService';
 import { databaseService } from './DatabaseService';
 import { instanceLoggerService } from './InstanceLoggerService';
 import { logWatcherService } from './LogWatcherService';
 import { groupAuthorizationService } from './GroupAuthorizationService';
-import { evaluateUser } from './AutoModLogic';
 import { fetchUser } from './UserService';
 import { windowService } from './WindowService';
 import { discordWebhookService } from './DiscordWebhookService';
 import { watchlistService } from './WatchlistService';
 import { serviceEventBus } from './ServiceEventBus';
+import { userProfileService } from './UserProfileService';
 
 const logger = log.scope('AutoModService');
 
@@ -33,7 +34,9 @@ export interface AutoModRule {
 
 interface AutoModStoreSchema {
     rules: AutoModRule[];
-    liveAutoBan: boolean;
+
+    enableAutoReject: boolean;
+    enableAutoBan: boolean;
 }
 
 // Initialize store
@@ -41,7 +44,23 @@ export const store = new Store<AutoModStoreSchema>({
     name: 'automod-rules',
     defaults: {
         rules: [],
-        liveAutoBan: false
+        enableAutoReject: false,
+        enableAutoBan: false
+    },
+    migrations: {
+        '1.0.1': (store) => {
+             // Migrate old liveAutoBan to new settings
+             // eslint-disable-next-line @typescript-eslint/no-explicit-any
+             const oldStore = store as any;
+             if (oldStore.has('liveAutoBan')) {
+                 const wasEnabled = oldStore.get('liveAutoBan');
+                 // Conservative migration: If it was ON, we turn ON both.
+                 // If it was OFF, both are OFF.
+                 store.set('enableAutoReject', wasEnabled);
+                 store.set('enableAutoBan', wasEnabled);
+                 oldStore.delete('liveAutoBan');
+             }
+        }
     }
 });
 
@@ -60,6 +79,173 @@ const pruneProcessedCache = () => {
     if (processedRequests.size > PROCESSED_CACHE_MAX_SIZE) {
         const entries = Array.from(processedRequests);
         entries.slice(0, PROCESSED_CACHE_MAX_SIZE / 2).forEach(e => processedRequests.delete(e));
+    }
+};
+
+// ============================================
+// USER EVALUATION LOGIC (Consolidated from AutoModLogic.ts)
+// ============================================
+
+export const evaluateUser = async (user: {
+    id: string;
+    displayName: string;
+    tags?: string[];
+    bio?: string;
+    status?: string;
+    statusDescription?: string;
+    pronouns?: string;
+    ageVerified?: boolean;
+    ageVerificationStatus?: string;
+}, options: { allowMissingData?: boolean } = {}): Promise<{ action: AutoModActionType | 'ALLOW'; reason?: string; ruleName?: string }> => {
+    try {
+        const rules = store.get('rules').filter(r => r.enabled) as AutoModRule[];
+        
+        if (rules.length === 0) {
+            return { action: 'ALLOW' };
+        }
+
+        for (const rule of rules) {
+            let matches = false;
+            let reason = '';
+
+            if (rule.type === 'KEYWORD_BLOCK') {
+                // Parse config
+                let keywords: string[] = [];
+                let whitelist: string[] = [];
+                let scanBio = true;
+                let scanStatus = true;
+                let scanPronouns = false;
+                
+                try {
+                    const parsed = JSON.parse(rule.config);
+                    if (parsed && typeof parsed === 'object') {
+                        keywords = Array.isArray(parsed.keywords) ? parsed.keywords : [];
+                        whitelist = Array.isArray(parsed.whitelist) ? parsed.whitelist : [];
+                        scanBio = parsed.scanBio !== false;
+                        scanStatus = parsed.scanStatus !== false;
+                        scanPronouns = parsed.scanPronouns === true;
+                    } else if (Array.isArray(parsed)) {
+                        keywords = parsed;
+                    } else if (typeof parsed === 'string') {
+                        keywords = [parsed];
+                    }
+                } catch {
+                    keywords = rule.config ? [rule.config] : [];
+                }
+                
+                const textParts: string[] = [user.displayName];
+                if (scanBio && user.bio) textParts.push(user.bio);
+                if (scanStatus) {
+                    if (user.status) textParts.push(user.status);
+                    if (user.statusDescription) textParts.push(user.statusDescription);
+                }
+                if (scanPronouns && user.pronouns) textParts.push(user.pronouns);
+                
+                const searchableText = textParts.join(' ').toLowerCase();
+
+                for (const keyword of keywords) {
+                    const kw = keyword.toLowerCase().trim();
+                    if (!kw) continue;
+                    
+                    if (searchableText.includes(kw)) {
+                        const isWhitelisted = whitelist.some(w => 
+                            searchableText.includes(w.toLowerCase().trim())
+                        );
+                        
+                        if (!isWhitelisted) {
+                            matches = true;
+                            reason = `Keyword: "${keyword}"`;
+                            break;
+                        }
+                    }
+                }
+            } else if (rule.type === 'AGE_VERIFICATION') {
+                // Debug Logging for Age Verification
+                if (user.ageVerificationStatus === undefined) {
+                    logger.warn(`[AutoMod] User ${user.displayName} (${user.id}) has NO ageVerificationStatus. Defaulting to ALLOW (Safe Fail).`);
+                }
+
+                // If allowMissingData is true and we don't have status, SKIP this check (SAFE FAIL)
+                if (user.ageVerificationStatus === undefined) {
+                    continue; 
+                } 
+                
+                const normalizedStatus = (user.ageVerificationStatus || '').toLowerCase();
+                // Check against '18+' (exact) or 'hidden' (case-insensitive normalized)
+                if (user.ageVerificationStatus !== '18+' && normalizedStatus !== 'hidden') {
+                    matches = true;
+                    reason = `Age Verification Required (Found: ${user.ageVerificationStatus})`;
+                }
+            } else if (rule.type === 'TRUST_CHECK') {
+                // Trust check logic
+                const tags = user.tags || [];
+                
+                // If allowMissingData is true and no tags, assume safe (or skip)
+                if (options.allowMissingData && (!user.tags || user.tags.length === 0)) {
+                    // Skip check if we can't determine rank
+                } else {
+                    let configLevel = '';
+                    try {
+                        const parsed = JSON.parse(rule.config);
+                        configLevel = parsed.minTrustLevel || parsed.trustLevel || rule.config;
+                    } catch {
+                        configLevel = rule.config;
+                    }
+                    
+                    const trustLevels = ['system_trust_visitor', 'system_trust_basic', 'system_trust_known', 'system_trust_trusted', 'system_trust_veteran', 'system_trust_legend'];
+                    const requiredIndex = trustLevels.findIndex(t => t.includes(configLevel.toLowerCase()));
+                    
+                    if (requiredIndex > 0) {
+                        const userTrustIndex = trustLevels.findIndex(level => tags.includes(level));
+                        // If user has no trust tags and we aren't allowing missing data, they are -1 (below visitor)
+                        if (userTrustIndex < requiredIndex) {
+                            matches = true;
+                            reason = `Trust Level below ${configLevel}`;
+                        }
+                    }
+                }
+            } else if (rule.type === 'BLACKLISTED_GROUPS') {
+                // Check if user is member of any blacklisted groups
+                let config: { groupIds?: string[], groups?: Array<{ id: string; name: string }> } = { groupIds: [] };
+                try {
+                    config = JSON.parse(rule.config);
+                } catch {
+                    config = { groupIds: [] };
+                }
+
+                const blacklistedIds = config.groupIds || [];
+                if (blacklistedIds.length > 0) {
+                    try {
+                        const userGroups = await userProfileService.getUserGroups(user.id);
+                        for (const group of userGroups) {
+                            if (blacklistedIds.includes(group.groupId)) {
+                                matches = true;
+                                reason = `Member of blacklisted group: ${group.name}`;
+                                break;
+                            }
+                        }
+                    } catch (e) {
+                        logger.warn(`[AutoMod] Failed to fetch groups for ${user.displayName}: ${e}`);
+                        // Safe fail - don't block if we can't fetch groups
+                    }
+                }
+            }
+
+            if (matches) {
+                logger.info(`[AutoMod] User ${user.displayName} matched rule: ${rule.name}`);
+                return { 
+                    action: rule.actionType, 
+                    reason,
+                    ruleName: rule.name
+                };
+            }
+        }
+
+        return { action: 'ALLOW' };
+        
+    } catch (error) {
+        logger.error('[AutoMod] Error checking user:', error);
+        return { action: 'ALLOW' };
     }
 };
 
@@ -237,12 +423,43 @@ export const processJoinRequest = async (
         } else {
             // User failed a rule - auto-reject/block logic
 
-            // Check Master Switch for destructive actions
-            const liveAutoBanEnabled = store.get('liveAutoBan') === true;
-            if (!liveAutoBanEnabled) {
-                logger.info(`[AutoMod] 🛑 Auto-Ban/Reject SKIPPED for ${displayName} (Auto-Ban Toggle is OFF). Reason: ${evaluation.reason}`);
-                // We SKIP the rejection. The request remains pending.
-                return { processed: false, action: 'skip', reason: 'Auto-Ban Disabled' };
+            // Check Setting: Auto-Reject
+            const autoRejectEnabled = store.get('enableAutoReject') === true;
+            if (!autoRejectEnabled) {
+                const reason = evaluation.reason || 'Auto-Reject Disabled';
+                logger.info(`[AutoMod] 🛑 Auto-Reject SKIPPED for ${displayName} (Auto-Reject Toggle is OFF). Reason: ${reason}`);
+                
+                // Persist as SKIPPED so user knows we WOULD have rejected it
+                await persistAction({
+                    timestamp: new Date(),
+                    user: displayName,
+                    userId: userId,
+                    groupId: groupId,
+                    action: 'SKIPPED',
+                    reason: `${reason} (Action Prevented by Safety Toggle)`,
+                    module: 'Gatekeeper',
+                    details: { evaluation, ruleName: evaluation.ruleName }
+                });
+
+                // WEBHOOK (Notify of prevention)
+                discordWebhookService.sendEvent(
+                    groupId,
+                    {
+                         title: 'AutoMod Gatekeeper (Action Prevented)',
+                         description: `**User**: ${displayName} (${userId})\n**Verdict**: REJECT\n**Reason**: ${reason}\n\n*Action was prevented because Auto-Reject is disabled.*`,
+                         type: 'WARNING',
+                         fields: [
+                             { name: 'Request Type', value: 'Join Request', inline: true },
+                             { name: 'Rule', value: evaluation.ruleName || 'Unknown', inline: true },
+                             { name: 'Status', value: 'Pending Manual Review', inline: true },
+                             { name: 'User Link', value: `[Profile](https://vrchat.com/home/user/${userId})`, inline: true }
+                         ],
+                         targetUser: { displayName, id: userId }
+                    }
+                );
+
+                // We mark as processed so we don't spam logs every minute.
+                return { processed: true, action: 'skip', reason: 'Auto-Reject Disabled' };
             }
 
             try {
@@ -269,13 +486,17 @@ export const processJoinRequest = async (
                 // WEBHOOK
                 discordWebhookService.sendEvent(
                     groupId,
-                    '🛡️ AutoMod Gatekeeper',
-                    `**User Rejected**: ${displayName} (${userId})\n**Reason**: ${evaluation.reason}`,
-                    0xED4245, // Red
-                    [
-                        { name: 'Request Type', value: 'Join Request', inline: true },
-                        { name: 'Rule', value: evaluation.ruleName || 'Unknown', inline: true }
-                    ]
+                    {
+                        title: 'AutoMod Gatekeeper',
+                        description: `**User Rejected**: ${displayName} (${userId})\n**Reason**: ${evaluation.reason || 'No reason provided'}`,
+                        type: 'ERROR',
+                        fields: [
+                            { name: 'Request Type', value: 'Join Request', inline: true },
+                            { name: 'Rule', value: evaluation.ruleName || 'Unknown Rule', inline: true },
+                            { name: 'User Link', value: `[Profile](https://vrchat.com/home/user/${userId})`, inline: true }
+                        ],
+                        targetUser: { displayName, id: userId }
+                    }
                 );
 
                 return { processed: true, action: 'reject', reason: evaluation.reason };
@@ -376,6 +597,10 @@ export const processAllPendingRequests = async (): Promise<{
                     totalProcessed++;
                     if (result.action === 'accept') accepted++;
                     else if (result.action === 'reject') rejected++;
+                    else if (result.action === 'skip') {
+                        // It was "Processed" (evaluated) but skipped action.
+                        // We count it as processed.
+                    }
                 } else {
                     skipped++;
                 }
@@ -426,7 +651,16 @@ export const processGroupJoinNotification = async (notification: {
     await processJoinRequest(groupId, userId, displayName);
 };
 
-// ... (rest of the file until setupAutoModHandlers)
+export const startAutoModService = () => {
+    // Legacy setup if needed
+};
+
+export const stopAutoModService = () => {
+    if (autoModInterval) {
+        clearInterval(autoModInterval);
+        autoModInterval = null;
+    }
+};
 
 export const setupAutoModHandlers = () => {
     logger.info('Initializing AutoMod handlers...');
@@ -444,12 +678,34 @@ export const setupAutoModHandlers = () => {
         return store.get('rules');
     });
 
-    ipcMain.handle('automod:get-live-autoban', () => {
-        return store.get('liveAutoBan');
+    ipcMain.handle('automod:get-status', () => {
+        return {
+            autoReject: store.get('enableAutoReject'),
+            autoBan: store.get('enableAutoBan')
+        };
     });
 
-    ipcMain.handle('automod:set-live-autoban', (_e, enabled: boolean) => {
-        store.set('liveAutoBan', enabled);
+    ipcMain.handle('automod:set-auto-reject', (_e, enabled: boolean) => {
+        store.set('enableAutoReject', enabled);
+        
+        // Clear cache to re-evaluate pending requests immediately
+        logger.info(`[AutoMod] Auto-Reject turned ${enabled ? 'ON' : 'OFF'}. Clearing cache and re-scanning.`);
+        processedRequests.clear();
+        
+        // Trigger a re-scan shortly
+        setTimeout(() => {
+             processAllPendingRequests().catch(err => logger.error('AutoMod trigger failed', err));
+        }, 1000);
+        
+        return enabled;
+    });
+
+    ipcMain.handle('automod:set-auto-ban', (_e, enabled: boolean) => {
+        store.set('enableAutoBan', enabled);
+        // We don't need to clear processedRequests for this necessarily, 
+        // as checkPlayer logic is run often. 
+        // But to be safe if we want immediate reaction to existing members:
+        processedRequests.clear();
         return enabled;
     });
 
@@ -520,6 +776,20 @@ export const setupAutoModHandlers = () => {
         return true;
     });
 
+    // Search VRChat groups by name or shortCode
+    ipcMain.handle('automod:search-groups', async (_e, query: string) => {
+        try {
+            const result = await vrchatApiService.searchGroups(query);
+            if (result.success && result.data) {
+                return { success: true, groups: result.data };
+            }
+            return { success: false, error: result.error || 'Failed to search groups' };
+        } catch (error) {
+            logger.error('Failed to search groups', error);
+            return { success: false, error: String(error) };
+        }
+    });
+
     // Helper to extract Group ID from current location
     const getCurrentGroupId = (): string | null => {
         // We can get this from LogWatcher or InstanceLogger
@@ -587,16 +857,20 @@ export const setupAutoModHandlers = () => {
 
         // Suppress Webhook if backfill
         if (!isBackfill) {
-            discordWebhookService.sendEvent(
-                groupId,
-                title,
-                `**User**: ${player.displayName} (${player.userId})\n**Reason**: ${rule.name}`,
-                actionColor,
-                [
+            discordWebhookService.sendEvent(groupId, {
+                title: title,
+                description: `**User**: ${player.displayName} (${player.userId})\n**Reason**: ${rule.name}`,
+                type: isActionable ? 'ERROR' : 'WARNING',
+                fields: [
                     { name: 'Action Taken', value: actionValue, inline: true },
                     { name: 'Location', value: getCurrentGroupId() === groupId ? 'Current Group Instance' : 'Remote Request', inline: true }
-                ]
-            );
+                ],
+                targetUser: {
+                    displayName: player.displayName,
+                    id: player.userId
+                },
+                footer: 'Group Guard AutoMod'
+            });
         }
 
         if (!notifyOnly && (rule.actionType === 'REJECT' || rule.actionType === 'AUTO_BLOCK')) {
@@ -686,11 +960,11 @@ export const setupAutoModHandlers = () => {
             };
 
             // Notify only depending on setting
-            // Default liveAutoBan is false.
-            const liveAutoBanSetting = store.get('liveAutoBan');
-            const notifyOnly = liveAutoBanSetting !== true; // Only valid if explicitly true
+            // Check Setting: Auto-Ban Members
+            const autoBanEnabled = store.get('enableAutoBan') === true;
+            const notifyOnly = !autoBanEnabled;
             
-            logger.info(`[AutoMod] Action Triggered. LiveAutoBan: ${liveAutoBanSetting}, NotifyOnly: ${notifyOnly}`);
+            logger.info(`[AutoMod] Action Triggered. AutoBan: ${autoBanEnabled}, NotifyOnly: ${notifyOnly}`);
 
             await executeAction(player, syntheticRule, groupId, notifyOnly, isBackfill);
         }

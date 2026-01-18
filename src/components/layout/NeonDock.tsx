@@ -8,7 +8,7 @@ import {
   Shield, 
   List, 
   ClipboardList, 
-  Database 
+  Database
 } from 'lucide-react';
 import { DockItem } from './DockItem';
 
@@ -158,6 +158,8 @@ export const NeonDock: React.FC<NeonDockProps> = memo(({
                   </motion.div>
               )}
           </AnimatePresence>
+
+
 
         </motion.div>
       </motion.div>

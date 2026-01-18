@@ -1,6 +1,6 @@
 import React, { forwardRef } from 'react';
 import { cn } from '../../lib/utils';
-// import { type VariantProps } from 'class-variance-authority'; // Unused
+
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: 'default' | 'destructive' | 'outline' | 'secondary' | 'ghost' | 'link';

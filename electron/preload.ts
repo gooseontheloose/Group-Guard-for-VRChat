@@ -141,15 +141,6 @@ contextBridge.exposeInMainWorld('electron', {
         setPath: (path: string) => ipcRenderer.invoke('storage:set-path', path),
     },
 
-    // UI Layout Store (for dashboard layout persistence)
-    uiLayout: {
-        get: (key: string) => ipcRenderer.invoke('ui-layout:get', key),
-        set: (key: string, value: unknown) => ipcRenderer.invoke('ui-layout:set', key, value),
-        delete: (key: string) => ipcRenderer.invoke('ui-layout:delete', key),
-        has: (key: string) => ipcRenderer.invoke('ui-layout:has', key),
-    },
-
-
     // Instance Presence API
     instance: {
         getCurrentGroup: () => ipcRenderer.invoke('instance:get-current-group'),
@@ -163,7 +154,7 @@ contextBridge.exposeInMainWorld('electron', {
         recruitUser: (groupId: string, userId: string, message?: string) => ipcRenderer.invoke('instance:recruit-user', { groupId, userId, message }),
         unbanUser: (groupId: string, userId: string) => ipcRenderer.invoke('instance:unban-user', { groupId, userId }),
         kickUser: (groupId: string, userId: string) => ipcRenderer.invoke('instance:kick-user', { groupId, userId }),
-        // rallyForces: (groupId: string) => ipcRenderer.invoke('instance:rally-forces', { groupId }), // Deprecated but keeping for safety if needed
+
         getRallyTargets: (groupId: string) => ipcRenderer.invoke('instance:get-rally-targets', { groupId }),
         inviteToCurrent: (userId: string, message?: string) => ipcRenderer.invoke('instance:invite-to-current', { userId, message }),
         rallyFromSession: (filename: string, message?: string) => ipcRenderer.invoke('instance:rally-from-session', { filename, message }),
@@ -213,8 +204,10 @@ contextBridge.exposeInMainWorld('electron', {
             return () => ipcRenderer.removeListener('automod:violation', handler);
         },
         testNotification: () => ipcRenderer.invoke('automod:test-notification'),
-        getLiveAutoBan: () => ipcRenderer.invoke('automod:get-live-autoban'),
-        setLiveAutoBan: (enabled: boolean) => ipcRenderer.invoke('automod:set-live-autoban', enabled),
+        getStatus: () => ipcRenderer.invoke('automod:get-status'),
+        setAutoReject: (enabled: boolean) => ipcRenderer.invoke('automod:set-auto-reject', enabled),
+        setAutoBan: (enabled: boolean) => ipcRenderer.invoke('automod:set-auto-ban', enabled),
+        searchGroups: (query: string) => ipcRenderer.invoke('automod:search-groups', query),
     },
 
     // OSC API
@@ -237,17 +230,13 @@ contextBridge.exposeInMainWorld('electron', {
         disconnect: () => ipcRenderer.invoke('discord-rpc:disconnect'),
     },
 
-    // Analytics API
-    stats: {
-        getActivity: (groupId: string, days = 30) => ipcRenderer.invoke('stats:get-activity', { groupId, days }),
-        getHeatmap: (groupId: string) => ipcRenderer.invoke('stats:get-heatmap', { groupId }),
-    },
 
     // Discord Webhook API
     webhook: {
         getUrl: (groupId: string) => ipcRenderer.invoke('webhook:get-url', { groupId }),
         setUrl: (groupId: string, url: string) => ipcRenderer.invoke('webhook:set-url', { groupId, url }),
         test: (groupId: string) => ipcRenderer.invoke('webhook:test', { groupId }),
+        testMock: (groupId: string) => ipcRenderer.invoke('webhook:test-mock', { groupId }),
     },
 
     // Watchlist API
@@ -275,6 +264,15 @@ contextBridge.exposeInMainWorld('electron', {
         saveTemplate: (template: unknown) => ipcRenderer.invoke('report:save-template', template),
         deleteTemplate: (id: string) => ipcRenderer.invoke('report:delete-template', id),
         generate: (templateId: string, context: unknown) => ipcRenderer.invoke('report:generate', { templateId, context }),
+    },
+
+    // User Profile API (VRCX-style comprehensive profile fetching)
+    userProfile: {
+        getFullProfile: (userId: string) => ipcRenderer.invoke('userProfile:getFullProfile', userId),
+        getCompleteData: (userId: string) => ipcRenderer.invoke('userProfile:getCompleteData', userId),
+        getMutualCounts: (userId: string) => ipcRenderer.invoke('userProfile:getMutualCounts', userId),
+        getMutualFriends: (userId: string) => ipcRenderer.invoke('userProfile:getMutualFriends', userId),
+        getMutualGroups: (userId: string) => ipcRenderer.invoke('userProfile:getMutualGroups', userId),
     },
 
     // Settings API

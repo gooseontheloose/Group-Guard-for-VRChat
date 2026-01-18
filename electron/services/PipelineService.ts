@@ -15,7 +15,7 @@
 import { ipcMain } from 'electron';
 import log from 'electron-log';
 import WebSocket from 'ws';
-import { getVRChatClient, isAuthenticated } from './AuthService';
+import { vrchatApiService } from './VRChatApiService';
 import { processGroupJoinNotification } from './AutoModService';
 import { windowService } from './WindowService';
 
@@ -95,7 +95,7 @@ interface PipelineEvent {
  */
 async function fetchAuthToken(): Promise<string | null> {
   try {
-    const client = getVRChatClient();
+    const client = vrchatApiService.getClient();
     if (!client) {
       log.warn('[Pipeline] No VRChat client available for auth token fetch');
       return null;
@@ -185,7 +185,7 @@ async function connectWebSocket(): Promise<boolean> {
     return false;
   }
 
-  if (!isAuthenticated()) {
+  if (!vrchatApiService.isAuthenticated()) {
     log.warn('[Pipeline] Cannot connect - not authenticated');
     return false;
   }
@@ -238,7 +238,7 @@ async function connectWebSocket(): Promise<boolean> {
       });
 
       // Auto-reconnect if not manually disconnected
-      if (!isManualDisconnect && isAuthenticated()) {
+      if (!isManualDisconnect && vrchatApiService.isAuthenticated()) {
         scheduleReconnect();
       }
     };
@@ -291,7 +291,7 @@ function scheduleReconnect(): void {
   
   reconnectTimeout = setTimeout(() => {
     reconnectTimeout = null;
-    if (isAuthenticated() && !webSocket && !isConnecting && !isManualDisconnect) {
+    if (vrchatApiService.isAuthenticated() && !webSocket && !isConnecting && !isManualDisconnect) {
       connectWebSocket();
     }
   }, delay);

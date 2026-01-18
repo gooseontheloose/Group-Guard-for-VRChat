@@ -5,7 +5,6 @@ import { windowService } from './WindowService';
 import { databaseService } from './DatabaseService';
 import { groupAuthorizationService } from './GroupAuthorizationService';
 import { serviceEventBus } from './ServiceEventBus';
-import { discordBroadcastService } from './DiscordBroadcastService'; // Needed for clearing status
 
 const logger = log.scope('InstanceLogger');
 
@@ -104,8 +103,14 @@ class InstanceLoggerService {
       // when an instance is explicitly closed. We don't clear on location change
       // because users may rejoin the same instance.
       
-      const groupMatch = event.location.match(/~group\((grp_[a-zA-Z0-9-]+)\)/i);
-      const groupId = groupMatch ? groupMatch[1] : null;
+      // Extract group ID from location string (e.g., "~group(grp_xxx)")
+      // The regex captures group IDs with letters, numbers, hyphens, and underscores
+      const groupMatch = event.location.match(/~group\((grp_[a-zA-Z0-9_-]+)\)/i);
+      const groupId = groupMatch ? groupMatch[1].toLowerCase() : null;
+
+      if (groupMatch) {
+          logger.info(`[InstanceLogger] Extracted Group ID: ${groupId} from location`);
+      }
 
       this.currentGroupId = groupId;
       windowService.broadcast('instance:group-changed', groupId);
@@ -128,8 +133,9 @@ class InstanceLoggerService {
       // Prisma has 'id' (UUID) and 'sessionId' (unique string).
       // We'll generate sessionId manually to keep control.
       const sessionId = `sess_${Date.now()}`;
-      this.currentSessionId = sessionId;
       
+      // CRITICAL FIX: Await DB creation BEFORE setting this.currentSessionId
+      // This prevents race conditions where events try to log to a session that doesn't exist yet (FK violation)
       await databaseService.createSession({
           sessionId: sessionId,
           worldId: event.worldId,
@@ -140,6 +146,7 @@ class InstanceLoggerService {
           worldName: undefined
       });
 
+      this.currentSessionId = sessionId;
       log.info(`[InstanceLogger] Started new session: ${sessionId}`);
 
       // Log initial Location Change

@@ -1,28 +1,62 @@
-
 .container {
-  padding: 0 2rem;
-  padding-bottom: var(--dock-height);
-  height: 100%;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-primary) transparent;
   display: flex;
   flex-direction: column;
+  height: 100%;
+  gap: 0;
+  padding-bottom: var(--dock-height);
+  overflow: hidden;
 }
 
-.header {
-  margin-bottom: 2rem;
-  text-align: center;
+/* --- HEADER SECTION --- */
+
+.headerPanel {
   flex: 0 0 auto;
+  padding: 0.75rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  z-index: 10;
+}
+
+.titleSection {
+  min-width: 150px;
 }
 
 .title {
-  font-size: 2.5rem;
+  font-size: 1.5rem;
+  margin: 0;
   font-weight: 800;
+  line-height: 1.2;
 }
 
 .subtitle {
+  font-size: 0.7rem;
   color: var(--color-text-dim);
+  margin-top: 2px;
+  letter-spacing: 0.05em;
+  border-bottom: 2px solid var(--color-primary);
+  display: inline-block;
+  color: var(--color-primary);
+}
+
+.statsGrid {
+  display: flex;
+  gap: 0.5rem;
+  flex: 1;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+/* --- CONTENT AREA --- */
+
+.scrollArea {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem 2rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-primary) transparent;
 }
 
 /* --- GRID MODES --- */
@@ -31,14 +65,13 @@
   display: grid;
   gap: 1.5rem;
   padding-bottom: 2rem;
-  will-change: grid-template-columns; /* Hint for browser layout optim */
+  will-change: grid-template-columns; 
   transition: all 0.5s cubic-bezier(0.25, 0.8, 0.25, 1);
-  justify-content: center; /* Center the grid items within the container */
+  justify-content: center; 
 }
 
 .gridCompact {
   grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
-  /* Limit max width of items so they don't stretch too wide when few are centered */
   grid-auto-rows: 1fr;
 }
 
@@ -48,21 +81,70 @@
 
 /* --- CARD BASE --- */
 
+/* --- CARD BASE --- */
+
+/* --- CARD BASE --- */
+
+/* --- CARD BASE --- */
+
 .cardPanel {
   position: relative;
-  overflow: hidden; /* Re-enable clipping to fix corners */
+  overflow: hidden !important;
+  /* Match SettingsView innerCardStyle base but simpler for glow overwrite */
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
   padding: 0 !important;
-  border-radius: 20px;
-  background: rgba(255, 255, 255, 0.03);
-  transition: background 0.2s, border-color 0.2s;
-  border: 1px solid transparent;
+  
   cursor: pointer;
   display: flex;
   flex-direction: column;
+  height: 100%;
+  
+  /* Glow Variables Defaults */
+  --glow-x: 50%;
+  --glow-y: 50%;
+  --glow-opacity: 0;
+  
+  /* Interaction transitions */
+  transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1), border-color 0.3s ease;
+}
+
+/* Mouse Glow Effect */
+.cardPanel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: calc(var(--glow-opacity) * 0.4); /* Subtle glow */
+  background: radial-gradient(
+    600px circle at var(--glow-x) var(--glow-y),
+    var(--color-primary-glow),
+    transparent 40%
+  );
+  transition: opacity 0.3s ease;
+  z-index: 10; /* Above banner, below content text */
+  mix-blend-mode: screen; /* Nice blending */
+}
+
+/* Ensure content is strictly above glow if needed, though banner is usually BG */
+.banner, .bannerFallback {
+    z-index: 1; /* Below glow */
+}
+
+.overlayContent, .groupIcon, .groupIconPlaceholder, .liveBadge {
+    z-index: 20; /* Above glow */
 }
 
 .cardPanel:hover {
-  background: rgba(255, 255, 255, 0.08);
+  transform: translateY(-4px) scale(1.02);
+  border-color: rgba(var(--primary-hue), 100%, 70%, 0.3); /* Neon border hint */
+  box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+}
+
+.cardPanel:active {
+  transform: translateY(-2px) scale(1.01);
+  background: rgba(0, 0, 0, 0.3);
 }
 
 .cardLive {
@@ -217,16 +299,19 @@
 }
 
 
+/* ... */
+
 .liveBadge {
   position: absolute;
   background: var(--color-success);
   color: black;
   font-weight: 800;
-  z-index: 30; /* Higher Z-index to avoid clipping */
+  z-index: 30;
   box-shadow: 0 0 10px var(--color-success);
   pointer-events: none;
-  transition: all 0.5s ease;
 }
+
+/* ... */
 
 
 

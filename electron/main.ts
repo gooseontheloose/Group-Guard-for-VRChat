@@ -1,5 +1,9 @@
 import { app, BrowserWindow, shell, ipcMain, dialog } from 'electron';
 import path from 'path';
+import dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
 import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
 const logger = log.scope('App');
@@ -144,6 +148,7 @@ import { setupOscHandlers, oscService } from './services/OscService';
 import { setupOscAnnouncementHandlers } from './services/OscAnnouncementService';
 import { setupDiscordWebhookHandlers } from './services/DiscordWebhookService';
 import { setupReportHandlers } from './services/ReportService';
+import { setupUserProfileHandlers } from './services/UserProfileService';
 
 // ...
 import { processService } from './services/ProcessService';
@@ -159,14 +164,6 @@ ipcMain.handle('process:get-status', async () => {
 import { storageService } from './services/StorageService';
 import { discordBroadcastService } from './services/DiscordBroadcastService';
 import { databaseService } from './services/DatabaseService';
-// Storage API
-ipcMain.handle('stats:get-activity', (_e, { groupId, days = 30 }: { groupId: string, days?: number }) => {
-    return databaseService.getDailyActivityStats(groupId, days);
-});
-
-ipcMain.handle('stats:get-heatmap', (_e, { groupId }: { groupId: string }) => {
-    return databaseService.getActivityHeatmap(groupId);
-});
 
 // Storage API
 ipcMain.handle('storage:get-status', () => {
@@ -183,26 +180,6 @@ ipcMain.handle('storage:select-folder', () => {
 
 ipcMain.handle('storage:set-path', (_event, path) => {
   return storageService.setLocation(path);
-});
-
-// UI Layout Store (for dashboard layout persistence)
-import Store from 'electron-store';
-const uiLayoutStore = new Store<{ dashboardLayout: unknown }>({ name: 'ui-layout' });
-
-ipcMain.handle('ui-layout:get', (_event, key: string) => {
-  return uiLayoutStore.get(key);
-});
-
-ipcMain.handle('ui-layout:set', (_event, key: string, value: unknown) => {
-  uiLayoutStore.set(key, value);
-});
-
-ipcMain.handle('ui-layout:delete', (_event, key: string) => {
-  uiLayoutStore.delete(key as keyof typeof uiLayoutStore.store);
-});
-
-ipcMain.handle('ui-layout:has', (_event, key: string) => {
-  return uiLayoutStore.has(key);
 });
 
 // Initialize storage service
@@ -234,6 +211,7 @@ oscService.start();
 setupOscAnnouncementHandlers();
 setupDiscordWebhookHandlers();
 setupReportHandlers();
+setupUserProfileHandlers();
 
 import { settingsService, AppSettings } from './services/SettingsService';
 settingsService.initialize();

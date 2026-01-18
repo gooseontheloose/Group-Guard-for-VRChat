@@ -1,6 +1,8 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 
+import { useUserProfileStore } from '../../../stores/userProfileStore';
+
 export interface LogEntry {
     id: string;
     user: string;
@@ -17,7 +19,9 @@ interface InterceptionLogProps {
     onSelectEntry: (entry: LogEntry) => void;
 }
 
-export const InterceptionLog: React.FC<InterceptionLogProps> = ({ logs, onSelectEntry }) => {
+export const InterceptionLog: React.FC<InterceptionLogProps> = ({ logs }) => {
+    const { openProfile } = useUserProfileStore();
+
     return (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
              <div style={{ padding: '1rem', borderBottom: '1px solid var(--border-color)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -36,7 +40,7 @@ export const InterceptionLog: React.FC<InterceptionLogProps> = ({ logs, onSelect
                                     key={log.id}
                                     initial={{ opacity: 0, x: -10 }}
                                     animate={{ opacity: 1, x: 0 }}
-                                    onClick={() => onSelectEntry(log)}
+                                    onClick={() => openProfile(log.userId)}
                                     style={{ 
                                         display: 'flex', 
                                         alignItems: 'center', 

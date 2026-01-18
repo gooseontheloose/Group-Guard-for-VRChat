@@ -66,6 +66,19 @@ export const DiscordWebhookSettings: React.FC = () => {
         }
     };
 
+    const handleSimulate = async () => {
+        if (!selectedGroup) return;
+        setStatus('Simulating...');
+        try {
+            await window.electron.webhook.testMock(selectedGroup.id);
+            setStatus('Sim Sent!');
+            setTimeout(() => setStatus(''), 2000);
+        } catch (e) {
+            console.error(e);
+            setStatus('Sim Failed');
+        }
+    };
+
     // if (!selectedGroup) return null; // Removed early return
 
     return (
@@ -121,6 +134,7 @@ export const DiscordWebhookSettings: React.FC = () => {
                         <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
                             {status && <span style={{ color: status.includes('Failed') || status.includes('Error') ? 'var(--color-error)' : 'var(--color-success)' }}>{status}</span>}
                             <NeonButton variant="ghost" size="sm" onClick={handleTest} disabled={!webhookUrl}>Test</NeonButton>
+                            <NeonButton variant="ghost" size="sm" onClick={handleSimulate} disabled={!webhookUrl}>Simulate Ban</NeonButton>
                             <NeonButton variant="primary" size="sm" onClick={handleSave} disabled={isLoading}>Save</NeonButton>
                         </div>
                     </div>

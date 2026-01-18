@@ -12,6 +12,9 @@
   z-index: var(--z-header);
   pointer-events: none;
   -webkit-app-region: drag;
+  /* Seamless fallback cursor when mouse events are swallowed */
+  /* Fallback to native crosshair to avoid data URI parsing errors */
+  cursor: crosshair;
 }
 
 .leftSection {

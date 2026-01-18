@@ -197,7 +197,7 @@ export const DatabaseView: React.FC = () => {
                             Instance Database
                         </h1>
                         <div className={styles.subtitle}>
-                            SESSION HISTORY & ANALYTICS
+                            SESSION HISTORY & EVENTS
                         </div>
                     </div>
 

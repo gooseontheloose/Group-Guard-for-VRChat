@@ -71,6 +71,8 @@ interface GroupState {
   
   enterRoamingMode: () => void;
   exitRoamingMode: () => void;
+  
+  loadMoreMembers: (groupId: string) => Promise<void>;
 }
 
 export const useGroupStore = create<GroupState>((set, get) => ({
@@ -303,6 +305,34 @@ export const useGroupStore = create<GroupState>((set, get) => ({
 
   exitRoamingMode: () => {
     set({ isRoamingMode: false });
+  },
+
+  loadMoreMembers: async (groupId: string) => {
+      const state = get();
+      if (state.isMembersLoading) return;
+      
+      const currentCount = state.members.length;
+      // Safety: Don't load more if we probably have all of them (sanity check)
+      // but VRChat member counts can be desync'd, so relying on return count is better.
+      
+      set({ isMembersLoading: true });
+      try {
+        const result = await window.electron.getGroupMembers(groupId, currentCount, 100);
+        if (result.success && result.members) {
+           if (result.members.length === 0) {
+               // End of list reached
+           } else {
+               set((prev) => ({
+                   members: [...prev.members, ...result.members!],
+                   lastFetchedAt: { ...prev.lastFetchedAt, members: Date.now() }
+               }));
+           }
+        }
+      } catch (error) {
+         console.error('Failed to load more members', error);
+      } finally {
+          set({ isMembersLoading: false });
+      }
   }
 }));
 

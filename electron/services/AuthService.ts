@@ -1,76 +1,25 @@
 import { ipcMain } from 'electron';
 import log from 'electron-log';
-const logger = log.scope('AuthService');
+import fs from 'fs';
 import path from 'path';
+const logger = log.scope('AuthService');
 import { saveCredentials, clearCredentials, loadCredentials, hasSavedCredentials } from './CredentialsService';
 import { onUserLoggedIn, onUserLoggedOut } from './PipelineService';
 import { groupAuthorizationService } from './GroupAuthorizationService';
+import { getSessionStore, clearSessionStore, extractAuthCookie } from './SessionService';
+import { storageService } from './StorageService';
 
-// Import the VRChat SDK and Keyv for session persistence
+// Re-export for backward compatibility (used by CredentialsService)
+export { clearSessionStore };
+
+// Import the VRChat SDK
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { VRChat } = require('vrchat');
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const Keyv = require('keyv').default;
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const KeyvFile = require('keyv-file').default;
 
 // Store the VRChat SDK instance in memory (Main Process)
 let vrchatClient: InstanceType<typeof VRChat> | null = null;
 let currentUser: Record<string, unknown> | null = null;
 let pendingLoginCredentials: { username: string; password: string; rememberMe?: boolean; authCookie?: string } | null = null;
-
-// Persistent session storage using Keyv with SQLite
-let sessionStore: InstanceType<typeof Keyv> | null = null;
-
-import { storageService } from './StorageService';
-
-// ...
-
-function getSessionStore(): InstanceType<typeof Keyv> {
-  if (!sessionStore) {
-    // Store sessions in the configured data directory
-    const userDataPath = storageService.getDataDir();
-    const filePath = path.join(userDataPath, 'vrchat-session.json');
-    logger.info(`Session store path: ${filePath}`);
-    
-    const store = new KeyvFile({ filename: filePath });
-    
-    // WORKAROUND: Keyv v5+ crashes if store.opts.url is undefined during _checkIterableAdapter
-    // We patch the store to satisfy Keyv's internal check
-    if (!store.opts) store.opts = {};
-    if (!store.opts.url) store.opts.url = 'file://';
-    
-    sessionStore = new Keyv({ store, namespace: 'vrchat' });
-    
-    // WORKAROUND 2: VRChat library might re-wrap our Keyv instance if it detects a version/instance mismatch.
-    // This wrapper will check our instance's .opts.url, so we must ensure it exists.
-    if (sessionStore.opts) {
-        sessionStore.opts.url = 'file://';
-    } else {
-        sessionStore.opts = { url: 'file://' };
-    }
-    
-    sessionStore.on('error', (err: Error) => {
-      logger.error('Session store error:', err);
-    });
-  }
-  return sessionStore;
-}
-
-/**
- * Clear the Keyv session store (removes all persisted VRChat cookies)
- * Exported for use by CredentialsService and other auth-related services
- */
-export async function clearSessionStore(): Promise<void> {
-  try {
-    const store = getSessionStore();
-    await store.clear();
-    logger.info('Session store cleared');
-  } catch (error) {
-    logger.error('Failed to clear session store:', error);
-    throw error;
-  }
-}
 
 // Application info for VRChat API User-Agent requirement
 const APP_INFO = {
@@ -82,80 +31,7 @@ const APP_INFO = {
 // VRChat API base URL
 const VRCHAT_API_BASE = 'https://api.vrchat.cloud/api/1';
 
-// Type for cookie jar interfaces (tough-cookie compatible)
-interface CookieLike {
-  key?: string;
-  name?: string;
-  value?: string;
-}
 
-interface CookieJarLike {
-  getCookiesSync?: (url: string) => CookieLike[];
-  _jar?: CookieJarLike;
-}
-
-// Helper to extract auth cookie from client
-function extractAuthCookie(client: any): string | undefined {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const clientAny = client;
-// ...
-    
-    // Strategy 1: Axios Defaults (Most reliable for this SDK version)
-    if (clientAny.api && clientAny.api.defaults && clientAny.api.defaults.headers) {
-        const defaults = clientAny.api.defaults.headers;
-        if (defaults.cookie) return defaults.cookie as string;
-        if (defaults.common && defaults.common.cookie) return defaults.common.cookie as string;
-    }
-
-    // Strategy 2: Cookie Jar (if present)
-    const jar = clientAny.jar || clientAny.cookieJar || clientAny.cookies || clientAny.api?.defaults?.jar || clientAny.axios?.defaults?.jar;
-    
-    if (jar) {
-        // Collect all cookies for VRChat domains
-        const urlsToTry = [
-            'https://api.vrchat.cloud',
-            'https://vrchat.com'
-        ];
-        
-        const uniqueCookies = new Map<string, string>();
-        
-        // Helper to extract from tough-cookie style jar
-        const processCookie = (c: CookieLike) => {
-            const key = c.key || c.name;
-            const value = c.value;
-            if (key && value) uniqueCookies.set(key, value);
-        };
-
-        const getCookiesFromJar = (j: CookieJarLike, url: string) => {
-            if (typeof j.getCookiesSync === 'function') return j.getCookiesSync(url);
-            if (j._jar && typeof j._jar.getCookiesSync === 'function') return j._jar.getCookiesSync(url);
-            return [];
-        };
-
-        urlsToTry.forEach(url => {
-            try {
-                const found = getCookiesFromJar(jar, url);
-                if (Array.isArray(found)) found.forEach(processCookie);
-            } catch (e) { /* ignore */ }
-        });
-
-        // Also check if jar itself is just an array of cookies
-        if (Array.isArray(jar)) jar.forEach(processCookie);
-        
-        if (uniqueCookies.size > 0) {
-            const parts: string[] = [];
-            uniqueCookies.forEach((val, key) => parts.push(`${key}=${val}`));
-            return parts.join('; ');
-        }
-    }
-
-    return undefined;
-  } catch (e) {
-    logger.warn('Failed to extract auth cookie', e);
-    return undefined;
-  }
-}
 
 /**
  * Try to restore a session using the persisted Keyv session store
@@ -537,7 +413,6 @@ export async function fetchCurrentLocationFromApi(): Promise<string | null> {
  * Fetches the user list for a specific instance from the API.
  * Used to reconcile "Ghost" players or fill gaps in rotated logs.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function fetchInstancePlayers(location: string): Promise<{ id: string; displayName: string }[]> {
     if (!vrchatClient) return [];
     try {
@@ -557,9 +432,8 @@ export async function fetchInstancePlayers(location: string): Promise<{ id: stri
         const instance = resp.data || resp;
         
         // Return users array if present
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         if (instance && Array.isArray(instance.users)) {
-             return instance.users.map((u: any) => ({
+             return instance.users.map((u: { id: string; displayName: string }) => ({
                  id: u.id,
                  displayName: u.displayName
              }));
@@ -859,18 +733,84 @@ export function getCurrentUserId(): string | null {
   return currentUser?.id as string | null;
 }
 
-// Helper to get raw auth cookie
+// Helper to serialize cookies in the format the VRChat SDK uses
+function serializeCookieForHeader(cookie: { name: string; value: string }): string {
+    return `${cookie.name}=${cookie.value}`;
+}
+
+// Async helper to get auth cookie using SDK's getCookies method
+export async function getAuthCookieStringAsync(): Promise<string | undefined> {
+    // Strategy 1: Use SDK's getCookies method (preferred - this is how the SDK does it internally)
+    if (vrchatClient) {
+        try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const clientAny = vrchatClient as any;
+            if (typeof clientAny.getCookies === 'function') {
+                const cookies = await clientAny.getCookies();
+                if (Array.isArray(cookies) && cookies.length > 0) {
+                    logger.debug(`[Cookie] Got ${cookies.length} cookies from SDK getCookies()`);
+                    return cookies.map(serializeCookieForHeader).join('; ');
+                }
+            }
+        } catch (e) {
+            logger.warn('[Cookie] Failed to get cookies from SDK:', e);
+        }
+    }
+    
+    // Strategy 2: Sync extraction (fallback)
+    const syncCookie = extractAuthCookie(vrchatClient);
+    if (syncCookie) return syncCookie;
+    
+    // Strategy 3: Saved credentials
+    const saved = loadCredentials();
+    if (saved?.authCookie) {
+        logger.debug('Using saved authCookie from credentials store (fallback)');
+        return saved.authCookie;
+    }
+    
+    // Strategy 4: Try Keyv session store file
+    try {
+        const userDataPath = storageService.getDataDir();
+        const sessionFilePath = path.join(userDataPath, 'vrchat-session.json');
+        
+        if (fs.existsSync(sessionFilePath)) {
+            const data = JSON.parse(fs.readFileSync(sessionFilePath, 'utf-8'));
+            // Keyv stores with namespace prefix, e.g., "vrchat:cookies"
+            const cookieKey = Object.keys(data).find(k => k.includes('cookie'));
+            if (cookieKey && data[cookieKey]) {
+                let cookieValue = data[cookieKey];
+                // Keyv wraps values in { value: ..., expires: ... }
+                if (cookieValue.value) cookieValue = cookieValue.value;
+                if (typeof cookieValue === 'string') {
+                    logger.debug('Using cookie from Keyv session store file');
+                    return cookieValue;
+                } else if (Array.isArray(cookieValue)) {
+                    return cookieValue.map(serializeCookieForHeader).join('; ');
+                }
+            }
+        }
+    } catch (e) {
+        logger.warn('Failed to read session store file:', e);
+    }
+    
+    return undefined;
+}
+
+// Sync helper (kept for backward compatibility, but prefers async version)
 export function getAuthCookieString(): string | undefined {
   let cookie = vrchatClient ? extractAuthCookie(vrchatClient) : undefined;
   
   if (!cookie) {
-      // Fallback: Check saved credentials
+      // Fallback 1: Check saved credentials
       const saved = loadCredentials();
       if (saved && saved.authCookie) {
           logger.debug('Using saved authCookie from credentials store (fallback)');
           cookie = saved.authCookie;
       }
   }
+  
+  // Note: This sync version cannot access the async getCookies() method
+  // Use getAuthCookieStringAsync for full functionality
   
   return cookie;
 }

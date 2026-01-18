@@ -1,6 +1,7 @@
 ﻿import React, { useEffect, useState, memo, useRef } from 'react';
 import { useGroupStore } from '../../stores/groupStore';
 import { useAuditStore } from '../../stores/auditStore';
+import { useUserProfileStore } from '../../stores/userProfileStore';
 import { useDataRefresh } from '../../hooks/useDataRefresh';
 import { usePipelineStatus } from '../../hooks/usePipelineInit';
 import { GlassPanel } from '../../components/ui/GlassPanel';
@@ -15,7 +16,6 @@ import { StatTile } from './components/StatTile';
 import styles from './DashboardView.module.css';
 import { motion } from 'framer-motion';
 import { MassInviteDialog } from './dialogs/MassInviteDialog';
-import { AnalyticsView } from './views/AnalyticsView';
 import { formatDistanceToNow } from 'date-fns';
 
 const containerVariants = {
@@ -61,6 +61,8 @@ export const DashboardView: React.FC = memo(() => {
   const requestsRefresh = useDataRefresh({ type: 'requests' });
   const bansRefresh = useDataRefresh({ type: 'bans' });
   
+  const { openProfile } = useUserProfileStore();
+
   // Dialog State
   const [showMembers, setShowMembers] = useState(false);
   const [showRequests, setShowRequests] = useState(false);
@@ -74,7 +76,6 @@ export const DashboardView: React.FC = memo(() => {
   const hasFetchedMembersRef = useRef(false);
   const lastGroupIdRef = useRef<string | null>(null);
   
-  const [view, setView] = useState<'overview' | 'analytics'>('overview');
 
   // Initial Data Fetch
   useEffect(() => {
@@ -196,18 +197,10 @@ export const DashboardView: React.FC = memo(() => {
                 </h1>
                 <div style={{ display: 'flex', gap: '20px' }}>
                     <div 
-                        onClick={() => setView('overview')}
                         className={styles.subtitle} 
-                        style={{ cursor: 'pointer', color: view === 'overview' ? 'var(--color-primary)' : 'var(--color-text-dim)', borderBottom: view === 'overview' ? '2px solid var(--color-primary)' : '2px solid transparent' }}
+                        style={{ color: 'var(--color-primary)', borderBottom: '2px solid var(--color-primary)' }}
                     >
                         COMMAND CENTER
-                    </div>
-                    <div 
-                        onClick={() => setView('analytics')}
-                        className={styles.subtitle} 
-                        style={{ cursor: 'pointer', color: view === 'analytics' ? 'var(--color-primary)' : 'var(--color-text-dim)', borderBottom: view === 'analytics' ? '2px solid var(--color-primary)' : '2px solid transparent' }}
-                    >
-                        ANALYTICS & METRICS
                     </div>
                 </div>
             </div>
@@ -271,10 +264,8 @@ export const DashboardView: React.FC = memo(() => {
         </GlassPanel>
 
 
-
-        {view === 'overview' ? (
-            /* Main Content Split */
-            <div style={{ display: 'flex', gap: '1rem', flex: 1, minHeight: 0 }}>
+        {/* Main Content Split */}
+        <div style={{ display: 'flex', gap: '1rem', flex: 1, minHeight: 0 }}>
                 
                 {/* Left: Activity Feed */}
                 <GlassPanel style={{ flex: 2, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
@@ -316,7 +307,18 @@ export const DashboardView: React.FC = memo(() => {
                                         <div style={{ fontSize: '1.2rem' }}>{getLogIcon(log.type || '')}</div>
                                         <div style={{ flex: 1 }}>
                                             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                                                <span style={{ fontWeight: 600, color: getLogColor(log.type || '') }}>
+                                                <span 
+                                                    style={{ 
+                                                        fontWeight: 600, 
+                                                        color: getLogColor(log.type || ''),
+                                                        cursor: 'pointer',
+                                                    }}
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        openProfile(log.actorId);
+                                                    }}
+                                                    className={styles.clickableActor}
+                                                >
                                                     {actor}
                                                 </span>
                                                 <span style={{ fontSize: '0.75rem', color: 'var(--color-text-dim)' }}>
@@ -390,9 +392,6 @@ export const DashboardView: React.FC = memo(() => {
                     </GlassPanel>
                 </div>
             </div>
-        ) : (
-            <AnalyticsView />
-        )}
 
         {/* Dialogs */}
         <MembersListDialog isOpen={showMembers} onClose={() => setShowMembers(false)} />

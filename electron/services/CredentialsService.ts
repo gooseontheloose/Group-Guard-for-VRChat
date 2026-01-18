@@ -20,7 +20,8 @@ interface StoredCredentials {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const store: any = new Store({
   name: 'group-guard-credentials',
-  encryptionKey: 'group-guard-secure-storage-v1', // Additional layer of encryption
+
+  encryptionKey: process.env.ELECTRON_STORE_ENCRYPTION_KEY || 'group-guard-secure-storage-v1', // Fallback for dev/if env missing
   defaults: {
     rememberMe: false,
     savedAccounts: [] // New: Array of StoredCredentials

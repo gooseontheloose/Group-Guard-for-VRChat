@@ -225,7 +225,7 @@ export interface AutoModRule {
     id: number;
     name: string;
     enabled: boolean;
-    type: 'AGE_CHECK' | 'TRUST_CHECK' | 'KEYWORD_BLOCK' | 'WHITELIST_CHECK' | 'BAN_EVASION_CHECK';
+    type: 'AGE_CHECK' | 'TRUST_CHECK' | 'KEYWORD_BLOCK' | 'WHITELIST_CHECK' | 'BAN_EVASION_CHECK' | 'AGE_VERIFICATION' | 'BLACKLISTED_GROUPS';
     config: string;
     actionType: 'REJECT' | 'AUTO_BLOCK' | 'NOTIFY_ONLY';
     createdAt?: string;
@@ -410,14 +410,6 @@ export interface ElectronAPI {
       setPath: (path: string) => Promise<boolean>;
   };
 
-  // UI Layout Store (for dashboard layout persistence)
-  uiLayout: {
-      get: (key: string) => Promise<unknown>;
-      set: (key: string, value: unknown) => Promise<void>;
-      delete: (key: string) => Promise<void>;
-      has: (key: string) => Promise<boolean>;
-  };
-
   // Instance Presence API
   instance: {
     // Instance
@@ -461,9 +453,11 @@ export interface ElectronAPI {
       checkUser: (user: AutoModUserInput) => Promise<{ action: 'ALLOW' | 'REJECT' | 'AUTO_BLOCK' | 'NOTIFY_ONLY'; reason?: string; ruleName?: string }>;
       onViolation: (callback: (data: { displayName: string; userId: string; action: string; reason: string }) => void) => () => void;
       testNotification: () => Promise<boolean>;
-      getLiveAutoBan: () => Promise<boolean>;
-      setLiveAutoBan: (enabled: boolean) => Promise<boolean>;
-      getHistory: () => Promise<unknown[]>; // TODO: Define AutoModLogEntry type
+      getStatus: () => Promise<{ autoReject: boolean; autoBan: boolean }>;
+      setAutoReject: (enabled: boolean) => Promise<boolean>;
+      setAutoBan: (enabled: boolean) => Promise<boolean>;
+      getHistory: () => Promise<unknown[]>;
+      searchGroups: (query: string) => Promise<{ success: boolean; groups?: VRChatGroup[]; error?: string }>;
   };
 
   // OSC API
@@ -491,17 +485,12 @@ export interface ElectronAPI {
       disconnect: () => Promise<{ success: boolean }>;
   };
 
-  // Analytics API
-  stats: {
-      getActivity: (groupId: string, days?: number) => Promise<{ traffic: unknown[], automod: unknown[] }>;
-      getHeatmap: (groupId: string) => Promise<unknown[]>;
-  };
-
   // Discord Webhook API
   webhook: {
       getUrl: (groupId: string) => Promise<string>;
       setUrl: (groupId: string, url: string) => Promise<boolean>;
       test: (groupId: string) => Promise<boolean>;
+      testMock: (groupId: string) => Promise<boolean>;
   };
 
   // Watchlist API
@@ -525,6 +514,16 @@ export interface ElectronAPI {
       update: (settings: Partial<AppSettings>) => Promise<AppSettings>;
       selectAudio: () => Promise<{ path: string; name: string; data: string } | null>;
       getAudioData: (path: string) => Promise<string | null>;
+  };
+
+  // User Profile API (comprehensive profile data)
+  userProfile: {
+      getFullProfile: (userId: string) => Promise<{ success: boolean; data?: unknown; error?: string }>;
+      getCompleteData: (userId: string) => Promise<{ success: boolean; data?: unknown; error?: string }>;
+      getMutualCounts: (userId: string) => Promise<{ success: boolean; data?: unknown; error?: string }>;
+      getMutualFriends: (userId: string) => Promise<{ success: boolean; data?: unknown; error?: string }>;
+      getMutualGroups: (userId: string) => Promise<{ success: boolean; data?: unknown; error?: string }>;
+      getUserFeedback: (userId: string) => Promise<{ success: boolean; data?: unknown; error?: string }>;
   };
 }
 
