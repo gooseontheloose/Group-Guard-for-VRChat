@@ -61,7 +61,7 @@ class OscAnnouncementService {
         serviceEventBus.on('groups-updated', (data: { groups: unknown[] }) => {
             if (data && Array.isArray(data.groups)) {
                 let updatedCount = 0;
-                data.groups.forEach((g: any) => {
+                (data.groups as Array<{ id?: string; name?: string }>).forEach((g) => {
                     if (g && g.id && g.name) {
                         this.groupNames.set(g.id, g.name);
                         updatedCount++;
@@ -334,13 +334,15 @@ class OscAnnouncementService {
         // VRChat Chatbox Limit is 144 chars. 
         const SAFE_TEXT = text.substring(0, 144);
         logger.info(`Sending OSC announcement: "${SAFE_TEXT}"`);
-        oscService.send('/chatbox/input', [SAFE_TEXT, true, false]); // Message, Instant, No Sound
+        oscService.send('/chatbox/input', [SAFE_TEXT, true, false])
+            .catch(e => logger.debug('Failed to send OSC announcement', e)); // Message, Instant, No Sound
         
         // Schedule clear if duration is set and > 0
         if (durationSeconds && durationSeconds > 0) {
              this.clearMessageTimer = setTimeout(() => {
                  logger.info('Clearing OSC announcement (duration expired)');
-                 oscService.send('/chatbox/input', ["", true, false]);
+                 oscService.send('/chatbox/input', ["", true, false])
+                    .catch(e => logger.debug('Failed to clear OSC announcement', e));
                  this.clearMessageTimer = null;
              }, durationSeconds * 1000);
         }

@@ -11,6 +11,7 @@
 import log from 'electron-log';
 import { LRUCache } from 'lru-cache';
 import { networkService } from './NetworkService';
+import { VRChat } from 'vrchat';
 
 const logger = log.scope('VRChatApiService');
 
@@ -34,11 +35,11 @@ export interface VRCUser {
     location?: string;
     friendKey?: string;
     isFriend?: boolean;
-    last_login?: string;
-    last_activity?: string;
+    last_login?: string | Date;
+    last_activity?: string | Date;
     ageVerificationStatus?: string;
     ageVerified?: boolean;
-    date_joined?: string;
+    date_joined?: string | Date;
     [key: string]: unknown;
 }
 
@@ -149,8 +150,8 @@ export interface VRCWorld {
     tags?: string[];
     favorites?: number;
     visits?: number;
-    created_at?: string;
-    updated_at?: string;
+    created_at?: string | Date;
+    updated_at?: string | Date;
     [key: string]: unknown;
 }
 
@@ -238,8 +239,7 @@ export const vrchatApiService = {
     /**
      * Get the underlying VRChat SDK client (for advanced use cases)
      */
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    getClient(): any {
+    getClient(): InstanceType<typeof VRChat> | null {
         return getVRChatClient();
     },
 
@@ -341,9 +341,8 @@ export const vrchatApiService = {
             if (!userId) throw new Error('No current user');
 
             const response = await client.getUserGroups({ path: { userId } });
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const groups = (response.data || response) as any[];
-            const result = groups as VRCGroup[];
+            const groups = extractArray(response.data || response) as VRCGroup[];
+            const result = groups;
 
             // Populate Cache
             const now = Date.now();
@@ -499,7 +498,8 @@ export const vrchatApiService = {
             if (!client) throw new Error('Not authenticated');
 
             await client.banGroupMember({ 
-                path: { groupId, userId }
+                path: { groupId },
+                body: { userId }
             });
             return undefined;
         }, `banUser:${groupId}:${userId}`);
@@ -654,8 +654,7 @@ export const vrchatApiService = {
             if (!client) throw new Error('Not authenticated');
 
             const response = await client.getInstance({ 
-                worldId, 
-                instanceId 
+                path: { worldId, instanceId } 
             });
             const instance = (response.data || response) as VRCInstance;
 
@@ -690,9 +689,8 @@ export const vrchatApiService = {
             const client = getVRChatClient();
             if (!client) throw new Error('Not authenticated');
 
-            await client.closeGroupInstance({ 
-                path: { groupId: '', instanceId }, // Adjust based on SDK requirements
-                body: { worldId, instanceId }
+            await client.closeInstance({ 
+                path: { worldId, instanceId }
             });
             return undefined;
         }, `closeInstance:${worldId}:${instanceId}`);
@@ -814,14 +812,17 @@ export const vrchatApiService = {
  */
 function extractArray(data: unknown): unknown[] {
     if (Array.isArray(data)) return data;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const obj = data as any;
-    if (obj?.results && Array.isArray(obj.results)) return obj.results;
-    if (obj?.instances && Array.isArray(obj.instances)) return obj.instances;
-    if (obj?.members && Array.isArray(obj.members)) return obj.members;
-    if (obj?.bans && Array.isArray(obj.bans)) return obj.bans;
-    if (obj?.roles && Array.isArray(obj.roles)) return obj.roles;
-    if (obj?.requests && Array.isArray(obj.requests)) return obj.requests;
+    
+    if (typeof data === 'object' && data !== null) {
+        const obj = data as Record<string, unknown>;
+        if (Array.isArray(obj.results)) return obj.results;
+        if (Array.isArray(obj.instances)) return obj.instances;
+        if (Array.isArray(obj.members)) return obj.members;
+        if (Array.isArray(obj.bans)) return obj.bans;
+        if (Array.isArray(obj.roles)) return obj.roles;
+        if (Array.isArray(obj.requests)) return obj.requests;
+    }
+    
     return [];
 }
 

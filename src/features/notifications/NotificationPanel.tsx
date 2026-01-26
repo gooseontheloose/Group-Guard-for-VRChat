@@ -47,12 +47,12 @@ export const NotificationPanel: React.FC<NotificationPanelProps> = ({ isOpen }) 
             if (type === 'WHITELIST') {
                 if (item.ruleId && item.userId && item.detectedGroupId) {
                     await window.electron.automod.addToWhitelist(item.detectedGroupId, item.ruleId, { userId: item.userId });
-                    console.log(`Whitelisted user ${item.userId} for rule ${item.ruleId}`);
+                    await window.electron.automod.addToWhitelist(item.detectedGroupId, item.ruleId, { userId: item.userId });
                 }
             } else if (type === 'BAN') {
                 if (item.detectedGroupId && item.userId) {
                     await window.electron.banUser(item.detectedGroupId, item.userId);
-                    console.log(`Banned user ${item.userId} from group ${item.detectedGroupId}`);
+                    await window.electron.banUser(item.detectedGroupId, item.userId);
                 }
             }
             // Remove notification on success

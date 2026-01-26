@@ -58,10 +58,14 @@ Enhance in-game communication without typing.
 > **Note**: Running from source is recommended to get the absolute latest features and bug fixes that may not yet be in the public release.
 
 1.  **Clone the repo**:
+
     ```bash
     git clone https://github.com/AppleExpl01t/VRChat-Group-Guard.git
     cd VRChat-Group-Guard
     ```
+
+    > **Developer Note**: Please refer to [DEVELOPER.md](./DEVELOPER.md) for detailed setup, testing, and architecture information.
+
 2.  **Install dependencies**:
     ```bash
     npm install

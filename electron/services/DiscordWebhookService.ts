@@ -1,5 +1,5 @@
 import Store from 'electron-store';
-import { ipcMain } from 'electron';
+import { ipcMain, safeStorage } from 'electron';
 import log from 'electron-log';
 import fetch from 'cross-fetch'; // or use native fetch if node version > 18 (Electron 39 is node 20+)
 
@@ -26,12 +26,45 @@ export interface WebhookEventData {
     footer?: string;
 }
 
+interface DiscordEmbed {
+    title: string;
+    description?: string;
+    url?: string;
+    timestamp?: string;
+    color?: number;
+    footer?: { text: string; icon_url?: string };
+    image?: { url: string };
+    thumbnail?: { url: string };
+    video?: { url: string };
+    provider?: { name: string; url?: string };
+    author?: { name: string; url?: string; icon_url?: string };
+    fields?: { name: string; value: string; inline?: boolean }[];
+}
+
 export class DiscordWebhookService {
 
     constructor() {}
 
     public getWebhook(groupId: string): string | undefined {
-        return store.get(`webhooks.${groupId}`);
+        const encryptedUrl = store.get(`webhooks.${groupId}`);
+        if (!encryptedUrl) return undefined;
+        
+        try {
+            if (safeStorage.isEncryptionAvailable()) {
+                try {
+                    const encrypted = Buffer.from(encryptedUrl as string, 'base64');
+                    return safeStorage.decryptString(encrypted);
+                } catch {
+                     // If decryption fails, try base64 fallback
+                     return Buffer.from(encryptedUrl as string, 'base64').toString('utf-8');
+                }
+            } else {
+                return Buffer.from(encryptedUrl as string, 'base64').toString('utf-8');
+            }
+        } catch (e) {
+            logger.error(`Failed to decrypt webhook for group ${groupId}`, e);
+            return undefined;
+        }
     }
 
     public setWebhook(groupId: string, url: string) {
@@ -39,7 +72,17 @@ export class DiscordWebhookService {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             store.delete(`webhooks.${groupId}` as any);
         } else {
-            store.set(`webhooks.${groupId}`, url.trim());
+             let encryptedUrl: string;
+             // Use safeStorage if available (uses OS keychain/credential manager)
+             if (safeStorage.isEncryptionAvailable()) {
+                 const encrypted = safeStorage.encryptString(url.trim());
+                 encryptedUrl = encrypted.toString('base64');
+             } else {
+                 // Fallback to base64 (less secure, but prevents plain text storage)
+                 encryptedUrl = Buffer.from(url.trim()).toString('base64');
+                 logger.warn('safeStorage not available, using fallback encryption for webhook');
+             }
+            store.set(`webhooks.${groupId}`, encryptedUrl);
         }
     }
 
@@ -94,7 +137,7 @@ export class DiscordWebhookService {
 
         const color = colors[data.type] || colors['INFO'];
 
-        const embed: any = {
+        const embed: DiscordEmbed = {
             title: data.title,
             description: data.description,
             color: color,

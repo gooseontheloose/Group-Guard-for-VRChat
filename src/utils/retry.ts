@@ -97,7 +97,7 @@ const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(r
  *   { 
  *     maxRetries: 5,
  *     initialDelayMs: 500,
- *     onRetry: (attempt, error) => console.log(`Retry ${attempt}: ${error}`)
+ *     onRetry: (attempt, error) => {}
  *   }
  * );
  * ```

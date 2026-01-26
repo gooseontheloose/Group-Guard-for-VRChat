@@ -26,6 +26,7 @@ import { windowService } from './WindowService';
 const PIPELINE_URL = 'wss://pipeline.vrchat.cloud';
 const RECONNECT_DELAY_MS = 5000;
 const MAX_RECONNECT_ATTEMPTS = 10;
+const AUTO_RECONNECT_INTERVAL = 10 * 60 * 1000; // 10 minutes
 
 // ============================================
 // STATE
@@ -34,6 +35,7 @@ const MAX_RECONNECT_ATTEMPTS = 10;
 let webSocket: WebSocket | null = null;
 let reconnectAttempts = 0;
 let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+let periodicReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let lastMessageData = '';
 let isConnecting = false;
 let isManualDisconnect = false;
@@ -219,10 +221,16 @@ async function connectWebSocket(): Promise<boolean> {
       
       // Notify renderer that pipeline is connected
       emitToRenderer('pipeline:connected', { connected: true });
+      
+      // Start periodic auto-reconnect timer
+      startPeriodicReconnect();
     };
 
     socket.onclose = (event: WebSocket.CloseEvent) => {
       log.info(`[Pipeline] WebSocket closed: code=${event.code}, reason=${event.reason}`);
+      
+      // Stop periodic timer on close
+      stopPeriodicReconnect();
       
       if (webSocket === socket) {
         webSocket = null;
@@ -320,6 +328,54 @@ function disconnectWebSocket(): void {
   
   reconnectAttempts = 0;
   isConnecting = false;
+}
+
+/**
+ * Starts the periodic auto-reconnect timer.
+ */
+function startPeriodicReconnect(): void {
+  stopPeriodicReconnect(); // Ensure no duplicates
+  
+  log.info(`[Pipeline] Starting periodic auto-reconnect timer (${AUTO_RECONNECT_INTERVAL / 1000 / 60}m)`);
+  
+  periodicReconnectTimer = setTimeout(() => {
+    log.info('[Pipeline] Triggering scheduled auto-reconnection for stability...');
+    forceReconnect().catch(err => {
+      log.error('[Pipeline] Scheduled auto-reconnect failed:', err);
+    });
+  }, AUTO_RECONNECT_INTERVAL);
+}
+
+/**
+ * Stops the periodic auto-reconnect timer.
+ */
+function stopPeriodicReconnect(): void {
+  if (periodicReconnectTimer) {
+    clearTimeout(periodicReconnectTimer);
+    periodicReconnectTimer = null;
+  }
+}
+
+/**
+ * Forces a reconnection (disconnect -> connect).
+ */
+export async function forceReconnect(): Promise<boolean> {
+  log.info('[Pipeline] Force reconnect initiated');
+  
+  // We don't want the standard "onclose" reconnection logic to fire,
+  // so we treat it as a manual disconnect initially, then reset.
+  disconnectWebSocket();
+  
+  // Reset state for a fresh connection
+  isManualDisconnect = false;
+  reconnectAttempts = 0;
+  
+  // Small optional delay to ensure socket creates cleanly?
+  // Usually immediate is fine, but a tiny tick helps.
+  await new Promise(resolve => setTimeout(resolve, 100));
+
+  const success = await connectWebSocket();
+  return success;
 }
 
 // ============================================
@@ -464,11 +520,8 @@ export function setupPipelineHandlers(): void {
 
   // Force reconnect
   ipcMain.handle('pipeline:reconnect', async () => {
-    log.info('[Pipeline] Reconnect requested');
-    disconnectWebSocket();
-    isManualDisconnect = false;
-    reconnectAttempts = 0;
-    const success = await connectWebSocket();
+    log.info('[Pipeline] Reconnect requested via IPC');
+    const success = await forceReconnect();
     return { success };
   });
 }

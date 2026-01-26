@@ -1,5 +1,7 @@
-import { ipcMain, safeStorage } from 'electron';
+import { ipcMain, safeStorage, app } from 'electron';
 import log from 'electron-log';
+import fs from 'fs';
+import path from 'path';
 import { clearSessionStore } from './AuthService';
 
 // electron-store is ESM in v9+, we need to use dynamic import or require
@@ -15,18 +17,53 @@ interface StoredCredentials {
   authCookie?: string;
 }
 
-// Initialize electron-store with encryption
-// Using any type since electron-store types are complex with ESM/CJS interop
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const store: any = new Store({
-  name: 'group-guard-credentials',
+interface CredentialStore {
+  get(key: string, defaultValue?: unknown): unknown;
+  set(key: string, value: unknown): void;
+  has(key: string): boolean;
+  delete(key: string): void;
+}
 
-  encryptionKey: process.env.ELECTRON_STORE_ENCRYPTION_KEY || 'group-guard-secure-storage-v1', // Fallback for dev/if env missing
-  defaults: {
-    rememberMe: false,
-    savedAccounts: [] // New: Array of StoredCredentials
+// Initialize electron-store with encryption
+let store: CredentialStore;
+
+try {
+  store = new Store({
+    name: 'group-guard-credentials',
+    encryptionKey: process.env.ELECTRON_STORE_ENCRYPTION_KEY,
+    defaults: {
+      rememberMe: false,
+      savedAccounts: []
+    }
+  });
+} catch (error) {
+  // If store is corrupted (e.g. wrong encryption key or invalid JSON), reset it
+  log.error('Failed to initialize credentials store, likely corrupted. Resetting...', error);
+  
+  try {
+    // Manually remove the file. We reconstruct the path standard to electron-store.
+    const userDataPath = app.getPath('userData');
+    const storePath = path.join(userDataPath, 'group-guard-credentials.json');
+    if (fs.existsSync(storePath)) {
+      fs.unlinkSync(storePath);
+      log.info('Corrupted credentials file deleted.');
+    }
+    
+    // Retry initialization
+    store = new Store({
+      name: 'group-guard-credentials',
+      encryptionKey: process.env.ELECTRON_STORE_ENCRYPTION_KEY,
+      defaults: {
+          rememberMe: false,
+          savedAccounts: []
+      }
+    });
+  } catch (retryError) {
+    log.error('Critical Error: Could not reset credentials store.', retryError);
+    // Fallback to in-memory mock or empty store to prevent crash (optional, but safer to let it crash if FS is broken)
+    throw retryError;
   }
-});
+}
 
 /**
  * Save credentials securely
@@ -143,11 +180,11 @@ export async function clearCredentials(): Promise<void> {
  * Check if credentials are saved
  */
 export function hasSavedCredentials(): boolean {
-  return store.has('savedCredentials') && store.get('rememberMe', false);
+  return store.has('savedCredentials') && (store.get('rememberMe', false) as boolean);
 }
 
 export function getRememberMe(): boolean {
-  return store.get('rememberMe', false);
+  return (store.get('rememberMe', false) as boolean);
 }
 
 /**

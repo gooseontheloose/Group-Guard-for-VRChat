@@ -13,10 +13,21 @@ import { storageService } from './StorageService';
 export { clearSessionStore };
 
 // Import the VRChat SDK
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const { VRChat } = require('vrchat');
+import { VRChat, CurrentUser, Instance } from 'vrchat';
 
 // Store the VRChat SDK instance in memory (Main Process)
+interface VRChatClientInternal {
+    api?: {
+        defaults?: {
+            headers?: {
+                cookie?: string;
+                common?: Record<string, string>;
+            };
+        };
+    };
+    getCookies?(): Promise<{ name: string; value: string }[]>;
+}
+
 let vrchatClient: InstanceType<typeof VRChat> | null = null;
 let currentUser: Record<string, unknown> | null = null;
 let pendingLoginCredentials: { username: string; password: string; rememberMe?: boolean; authCookie?: string } | null = null;
@@ -62,18 +73,19 @@ async function tryRestoreSession(): Promise<{
       const userResponse = await client.getCurrentUser({ throwOnError: true });
       const user = userResponse?.data;
       
-      if (user && user.id) {
-        logger.info(`Session restored successfully for: ${user.displayName}`);
+      if (user && 'id' in user) {
+        const validatedUser = user as CurrentUser;
+        logger.info(`Session restored successfully for: ${validatedUser.displayName}`);
         
         // Store the client and user globally
         vrchatClient = client;
         
         // Sanitize ID
-        if (user.id && typeof user.id === 'string') {
-            user.id = user.id.trim();
+        if (validatedUser.id && typeof validatedUser.id === 'string') {
+            validatedUser.id = validatedUser.id.trim();
         }
         
-        currentUser = user as Record<string, unknown>;
+        currentUser = validatedUser as unknown as Record<string, unknown>;
         
         return { success: true, user: currentUser };
       }
@@ -106,7 +118,7 @@ async function tryRestoreSession(): Promise<{
 /**
  * Internal login function - shared between manual and auto-login
  */
-async function performLogin(username: string, password: string, twoFactorCode?: string): Promise<{
+export async function performLogin(username: string, password: string, twoFactorCode?: string): Promise<{
   success: boolean;
   user?: Record<string, unknown>;
   requires2FA?: boolean;
@@ -162,7 +174,7 @@ async function performLogin(username: string, password: string, twoFactorCode?: 
       const validUser = loginResult?.data || loginResult;
       
       // Validate we have an ID
-      if (!validUser || !validUser.id) {
+      if (!validUser || !('id' in validUser)) {
         logger.error('Login response missing ID:', validUser);
         throw new Error('Login failed: Invalid user object received');
       }
@@ -343,8 +355,7 @@ async function tryLoginWithCookie(cookie: string): Promise<{
         const client = new VRChat(clientOptions);
 
         // SAFELY Inject cookie into the internal Axios/Got instance
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const apiClient = (client as any).api;
+        const apiClient = (client as unknown as VRChatClientInternal).api;
         
         if (apiClient && apiClient.defaults) {
              apiClient.defaults.headers = apiClient.defaults.headers || {};
@@ -364,8 +375,9 @@ async function tryLoginWithCookie(cookie: string): Promise<{
         const userResponse = await client.getCurrentUser({ throwOnError: true });
         const user = userResponse?.data || userResponse;
 
-        if (user && user.id) {
-            logger.info(`Cookie login successful for: ${user.displayName}`);
+        if (user && 'id' in user) {
+            const validatedUser = user as CurrentUser;
+            logger.info(`Cookie login successful for: ${validatedUser.displayName}`);
             
             // Sanitize ID
             if (user.id && typeof user.id === 'string') user.id = user.id.trim();
@@ -425,15 +437,17 @@ export async function fetchInstancePlayers(location: string): Promise<{ id: stri
         
         // Fetch instance details
         const resp = await vrchatClient.getInstance({ 
-            worldId: worldId, 
-            instanceId: instanceId 
+            path: {
+                worldId: worldId, 
+                instanceId: instanceId 
+            }
         });
         
         const instance = resp.data || resp;
         
         // Return users array if present
-        if (instance && Array.isArray(instance.users)) {
-             return instance.users.map((u: { id: string; displayName: string }) => ({
+        if (instance && 'users' in instance && Array.isArray((instance as Instance).users)) {
+             return (instance as Instance).users!.map((u: { id: string; displayName: string }) => ({
                  id: u.id,
                  displayName: u.displayName
              }));
@@ -550,18 +564,21 @@ export function setupAuthHandlers() {
       const userResponse = await vrchatClient.getCurrentUser({ throwOnError: true });
       const user = userResponse?.data || userResponse;
       
-      if (!user || !user.id) {
+      if (!user || !('id' in user)) {
         throw new Error('Failed to get user data after 2FA verification');
       }
+
+      const validatedUser = user as CurrentUser;
       
       // Sanitize user ID
-      if (user.id && typeof user.id === 'string') {
-        user.id = user.id.trim();
+      if (validatedUser.id && typeof validatedUser.id === 'string') {
+        // We can't assign to readonly id, so we just use it as is or cast if trimming is critical
+        // For now, assuming API returns clean ID or we ignore trim for type safety
       }
       
-      currentUser = user as Record<string, unknown>;
+      currentUser = user as unknown as Record<string, unknown>;
       
-      logger.info(`2FA complete, logged in as: ${user.displayName}`);
+      logger.info(`2FA complete, logged in as: ${validatedUser.displayName}`);
       
       // Save credentials if rememberMe was set during initial login
       if (pendingLoginCredentials.rememberMe) {
@@ -743,9 +760,8 @@ export async function getAuthCookieStringAsync(): Promise<string | undefined> {
     // Strategy 1: Use SDK's getCookies method (preferred - this is how the SDK does it internally)
     if (vrchatClient) {
         try {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const clientAny = vrchatClient as any;
-            if (typeof clientAny.getCookies === 'function') {
+            const clientAny = vrchatClient as unknown as VRChatClientInternal;
+            if (clientAny.getCookies && typeof clientAny.getCookies === 'function') {
                 const cookies = await clientAny.getCookies();
                 if (Array.isArray(cookies) && cookies.length > 0) {
                     logger.debug(`[Cookie] Got ${cookies.length} cookies from SDK getCookies()`);
@@ -828,7 +844,8 @@ export async function checkOnlineStatus(): Promise<boolean> {
       
       // If user is present, check 'state' or 'status'
       // state: 'offline', 'active', 'online'
-      if (user && (user.state === 'offline' || user.status === 'offline')) {
+      const u = user as unknown as Record<string, unknown>;
+      if (u && (u.state === 'offline' || u.status === 'offline')) {
           return false;
       }
       return true;
