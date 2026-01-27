@@ -125,7 +125,7 @@ const addToWhitelist = async (groupId: string, ruleId: number, target: { userId?
 
 // Simplified Types
 export type AutoModActionType = "REJECT" | "AUTO_BLOCK" | "NOTIFY_ONLY";
-export type AutoModRuleType = "AGE_VERIFICATION" | string;
+export type AutoModRuleType = "AGE_VERIFICATION" | "INSTANCE_18_GUARD" | "INSTANCE_PERMISSION_GUARD" | string;
 
 export interface AutoModRule {
   id: number;
@@ -233,6 +233,39 @@ const closedInstancesTimestamps = new Map<string, number>();
 // Track known instances to detect new ones (for OPENED events)
 // Key format: "groupId:worldId:instanceId"
 const knownInstancesCache = new Set<string>();
+
+// ============================================
+// INSTANCE PERMISSION GUARD (SNIPER) VARIABLES
+// ============================================
+
+const INSTANCE_CREATE_PERMISSIONS = [
+    "group-instance-public-create",
+    "group-instance-plus-create",
+    "group-instance-open-create",
+    "group-instance-restricted-create"
+];
+
+// Cache for processed audit logs to prevent duplicate processing
+// Key: "groupId:logId"
+const processedAuditLogIds = new Set<string>();
+const PROCESSED_AUDIT_LOG_CACHE_SIZE = 1000;
+
+const pruneProcessedAuditLogs = () => {
+    if (processedAuditLogIds.size > PROCESSED_AUDIT_LOG_CACHE_SIZE) {
+        const entries = Array.from(processedAuditLogIds);
+        entries.slice(0, PROCESSED_AUDIT_LOG_CACHE_SIZE / 2).forEach(e => processedAuditLogIds.delete(e));
+    }
+};
+
+// Cache for group roles to reduce API calls during sniping checks
+// Key: groupId, Value: { roles: VRCGroupRole[], timestamp: number }
+const groupRolesCache = new LRUCache<string, { roles: VRCGroupRole[], timestamp: number }>({
+    max: 50,
+    ttl: 1000 * 60 * 5 // 5 minutes (roles don't change THAT often)
+});
+
+// Import types if needed (VRCGroupRole is used)
+import type { VRCGroupRole } from "./VRChatApiService";
 
 // Prune old entries from closed instances cache
 const pruneClosedInstancesCache = () => {
@@ -1415,7 +1448,7 @@ export const processInstanceGuard = async (): Promise<{
                   if (ownerResult.success && ownerResult.data) {
                     ownerName = ownerResult.data.displayName;
                   }
-                } catch (e) {
+                } catch {
                   // Ignore - we may have already fetched this for the open event
                 }
               }
@@ -1465,8 +1498,8 @@ export const processInstanceGuard = async (): Promise<{
           }
         }
       }
-    } catch (groupError) {
-      logger.error(`[InstanceGuard] Error processing group ${groupId}:`, groupError);
+    } catch {
+      logger.error(`[InstanceGuard] Error processing group ${groupId}`);
     }
   }
 
@@ -1475,6 +1508,230 @@ export const processInstanceGuard = async (): Promise<{
   }
 
   return { totalClosed, groupsChecked };
+};
+
+// ============================================
+// PERMISSION GUARD (INSTANCE SNIPER)
+// ============================================
+// Checks audit logs for unauthorized instance creation events
+
+export const processInstanceSniper = async (): Promise<{
+    totalClosed: number;
+    groupsChecked: number;
+}> => {
+    const authorizedGroups = groupAuthorizationService.getAllowedGroupIds();
+    if (authorizedGroups.length === 0) {
+        return { totalClosed: 0, groupsChecked: 0 };
+    }
+
+    let totalClosed = 0;
+    let groupsChecked = 0;
+
+    // Helper to check permissions
+    const hasInstanceCreatePermission = (userRoleIds: string[], groupRoles: VRCGroupRole[]) => {
+        // Build a map of roleId -> permissions for quick lookup
+        const rolePermissionsMap = new Map<string, string[]>();
+        groupRoles.forEach(r => {
+            if (r.id && r.permissions) {
+                rolePermissionsMap.set(r.id, r.permissions);
+            }
+        });
+
+        for (const roleId of userRoleIds) {
+            const permissions = rolePermissionsMap.get(roleId) || [];
+            if (permissions.includes("*")) return true; // Wildcard admin
+            
+            for (const perm of permissions) {
+                if (INSTANCE_CREATE_PERMISSIONS.includes(perm)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+
+    // Helper to parse targetId from audit log
+    const parseInstanceLocation = (targetId: string) => {
+        if (!targetId) return null;
+        // Format: "wrld_xxx:12345~..."
+        const colonIndex = targetId.indexOf(':');
+        if (colonIndex === -1) return null;
+        return {
+            worldId: targetId.substring(0, colonIndex),
+            instanceId: targetId.substring(colonIndex + 1)
+        };
+    };
+
+    for (const groupId of authorizedGroups) {
+        try {
+            // Check if INSTANCE_PERMISSION_GUARD is enabled
+            const config = getGroupConfig(groupId);
+            const sniperRule = config.rules.find(r => r.type === 'INSTANCE_PERMISSION_GUARD' && r.enabled);
+
+            if (!sniperRule) continue;
+            groupsChecked++;
+            
+            // 1. Fetch Audit Logs
+            // We only need a small batch (e.g. 20) as we poll frequently
+            const logsResult = await vrchatApiService.getGroupAuditLogs(groupId, 20);
+            if (!logsResult.success || !logsResult.data) {
+                continue;
+            }
+
+            const logs = logsResult.data;
+            
+            // 2. Filter for new 'group.instance.create' events
+            const creationEvents = logs.filter(log => 
+                log.eventType === "group.instance.create" && 
+                !processedAuditLogIds.has(`${groupId}:${log.id}`)
+            );
+
+            if (creationEvents.length === 0) continue;
+
+            logger.info(`[PermissionGuard] Found ${creationEvents.length} new instance creation events for group ${groupId}`);
+
+            // 3. Ensure we have group roles loaded
+            let groupRoles = groupRolesCache.get(groupId)?.roles;
+            if (!groupRoles) {
+                const rolesResult = await vrchatApiService.getGroupRoles(groupId);
+                if (rolesResult.success && rolesResult.data) {
+                    groupRoles = rolesResult.data;
+                    groupRolesCache.set(groupId, { roles: groupRoles, timestamp: Date.now() });
+                } else {
+                    logger.warn(`[PermissionGuard] Failed to fetch roles for ${groupId}, skipping check.`);
+                    continue;
+                }
+            }
+
+            // 4. Process each event
+            for (const logItem of creationEvents) {
+                const logKey = `${groupId}:${logItem.id}`;
+                processedAuditLogIds.add(logKey); // Mark as processed immediately
+                pruneProcessedAuditLogs();
+
+                const actorId = logItem.actorId;
+                const targetId = logItem.targetId; // This contains worldId:instanceId
+
+                if (!actorId || !targetId) continue;
+
+                const location = parseInstanceLocation(targetId);
+                if (!location) continue;
+
+                // Check if the instance is already closed (cached check)
+                const instanceKey = `${groupId}:${location.worldId}:${location.instanceId}`;
+                if (closedInstancesCache.has(instanceKey)) continue;
+
+                logger.debug(`[PermissionGuard] Checking instance created by ${logItem.actorDisplayName} (${actorId})`);
+
+                // 5. Check User Roles
+                try {
+                    // We need the user's roles WITHIN this group.
+                    // The audit log unfortunately doesn't give us the user's current roles at time of action.
+                    // We must fetch the group member.
+                    // NOTE: If user left the group, this might fail (404). In that case, we should probably close it to be safe?
+                    // InstanceSniper logic: If 404, treat as unauthorized and close.
+                    
+                    // We can use a direct API call here.
+                    const client = getVRChatClient();
+                    if (!client) continue;
+
+                    let member; 
+                    try {
+                         const memberResp = await client.getGroupMember({ path: { groupId, userId: actorId } });
+                         member = memberResp.data;
+                    } catch (unknownError: unknown) {
+                         const e = unknownError as { response?: { status: number } };
+                         if (e.response?.status === 404) {
+                             logger.warn(`[PermissionGuard] Creator ${actorId} is no longer in group. treating as UNAUTHORIZED.`);
+                         } else {
+                             logger.error(`[PermissionGuard] Error fetching member ${actorId}:`, unknownError);
+                             continue; // Skip if API error (not 404)
+                         }
+                    }
+
+                    let isAuthorized = false;
+
+                    if (member) {
+                        const userRoleIds = [
+                            ...(member.roleIds || []),
+                            ...(member.mRoleIds || [])
+                        ];
+                        isAuthorized = hasInstanceCreatePermission(userRoleIds, groupRoles);
+                    } else {
+                         // User not found (404) -> Unauthorized
+                         isAuthorized = false; 
+                    }
+
+                    if (!isAuthorized) {
+                        const reason = member ? `User does not have instance creation permissions` : `User is not a member of the group`;
+                        logger.info(`[PermissionGuard] 🚨 UNAUTHORIZED INSTANCE DETECTED! Closing... Creator: ${logItem.actorDisplayName} (${actorId}). Reason: ${reason}`);
+
+                        // CLOSE IT
+                        const closeResult = await vrchatApiService.closeInstance(location.worldId, location.instanceId);
+                        
+                        // Treat "Already Closed" (403) as success to stop retrying
+                        // Actually closeInstance returns Result object, we check that.
+                        
+                        if (closeResult.success) {
+                            totalClosed++;
+                             // Add to closed cache
+                            closedInstancesCache.add(instanceKey);
+                            closedInstancesTimestamps.set(instanceKey, Date.now());
+
+                            // Log action
+                            await persistAction({
+                                timestamp: new Date(),
+                                user: logItem.actorDisplayName || 'Unknown',
+                                userId: actorId,
+                                groupId,
+                                action: 'INSTANCE_CLOSED',
+                                reason: `[Permission Guard] ${reason}`,
+                                module: 'PermissionGuard',
+                                details: {
+                                    worldId: location.worldId,
+                                    instanceId: location.instanceId,
+                                    ruleName: 'Permission Guard'
+                                },
+                                skipBroadcast: false // Broadcast this! It's important.
+                            });
+                             
+                             // Also add to Instance Guard History for visibility in that view
+                            const eventEntry: InstanceGuardEvent = {
+                                id: `pg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                                timestamp: Date.now(),
+                                action: 'AUTO_CLOSED',
+                                worldId: location.worldId,
+                                worldName: 'Unknown (Sniper)', // We'd need to fetch world info to know name, maybe overkill for now
+                                instanceId: location.instanceId,
+                                groupId,
+                                reason: `[Permission Guard] ${reason}`,
+                                closedBy: 'Permission Guard',
+                                wasAgeGated: false, // Unknown
+                                ownerId: actorId,
+                                ownerName: logItem.actorDisplayName,
+                            };
+                             instanceGuardHistory.unshift(eventEntry);
+                             if (instanceGuardHistory.length > INSTANCE_HISTORY_MAX_SIZE) instanceGuardHistory.pop();
+                             windowService.broadcast('instance-guard:event', eventEntry);
+
+                        } else {
+                            logger.error(`[PermissionGuard] Failed to close instance: ${closeResult.error}`);
+                        }
+                    } else {
+                        logger.debug(`[PermissionGuard] Instance allowed. Creator has permission.`);
+                    }
+
+                } catch (err) {
+                    logger.error(`[PermissionGuard] Error processing log entry`, err);
+                }
+            }
+
+        } catch (e) {
+            logger.error(`[PermissionGuard] Error checking group ${groupId}:`, e);
+        }
+    }
+
+    return { totalClosed, groupsChecked };
 };
 
 export const startAutoModService = () => {
@@ -1501,6 +1758,11 @@ export const startAutoModService = () => {
     // Also run Instance Guard check
     processInstanceGuard().catch((err) =>
       logger.error("[AutoMod] Instance Guard processing failed", err)
+    );
+
+    // Run Permission Guard (Sniper) check
+    processInstanceSniper().catch((err) =>
+      logger.error("[AutoMod] Permission Guard processing failed", err)
     );
   }, CHECK_INTERVAL);
 };

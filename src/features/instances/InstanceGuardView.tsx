@@ -36,6 +36,9 @@ export const InstanceGuardView: React.FC = () => {
 
     // Load rules
     const loadRules = useCallback(async () => {
+        // Ensure async execution to prevent synchronous setState in useEffect
+        await Promise.resolve();
+        
         if (!selectedGroup) {
             setRules([]);
             return;
@@ -50,6 +53,8 @@ export const InstanceGuardView: React.FC = () => {
 
     // Load instance history
     const loadHistory = useCallback(async () => {
+        await Promise.resolve();
+
         if (!selectedGroup) {
             setInstanceLog([]);
             return;
@@ -62,9 +67,13 @@ export const InstanceGuardView: React.FC = () => {
         }
     }, [selectedGroup]);
 
+    // Data fetching on mount/when selectedGroup changes
     useEffect(() => {
-        loadRules();
-        loadHistory();
+        // Use IIFE to properly handle async data fetching in effects
+        (async () => {
+            await loadRules();
+            await loadHistory();
+        })();
     }, [loadRules, loadHistory]);
 
     // Listen for real-time instance events
@@ -96,7 +105,8 @@ export const InstanceGuardView: React.FC = () => {
         }
 
         const ruleNames: Record<string, string> = {
-            'INSTANCE_18_GUARD': '18+ Instance Guard'
+            'INSTANCE_18_GUARD': '18+ Instance Guard',
+            'INSTANCE_PERMISSION_GUARD': 'Permission Guard'
         };
 
         const newRule = {
@@ -224,8 +234,19 @@ export const InstanceGuardView: React.FC = () => {
                                     icon={<ShieldCheck size={20} />}
                                 />
 
+                                {/* Permission Guard Toggle (Sniper) */}
+                                <RuleCard
+                                    title="Permission Guard"
+                                    statusLabel={rules.find(r => r.type === 'INSTANCE_PERMISSION_GUARD')?.enabled ? 'ON' : 'OFF'}
+                                    isEnabled={!!rules.find(r => r.type === 'INSTANCE_PERMISSION_GUARD')?.enabled}
+                                    onToggle={() => toggleRule('INSTANCE_PERMISSION_GUARD')}
+                                    color="#f43f5e"
+                                    icon={<ShieldCheck size={20} />}
+                                    description="Auto-close instances created by users without permission."
+                                />
+
                                 {/* Status Info */}
-                                {isInstanceGuardEnabled && (
+                                {(isInstanceGuardEnabled || rules.find(r => r.type === 'INSTANCE_PERMISSION_GUARD')?.enabled) && (
                                     <div style={{
                                         marginTop: '0.5rem',
                                         padding: '0.75rem',
@@ -237,7 +258,7 @@ export const InstanceGuardView: React.FC = () => {
                                     }}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                             <span className="animate-pulse">●</span>
-                                            <span>Monitoring group instances every 60 seconds...</span>
+                                            <span>Monitoring group instances...</span>
                                         </div>
                                     </div>
                                 )}

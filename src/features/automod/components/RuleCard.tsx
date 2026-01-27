@@ -10,6 +10,7 @@ interface RuleCardProps {
     color: string;
     actionLabel?: string;
     onAction?: (e: React.MouseEvent) => void;
+    description?: string;
 }
 
 // PERF FIX: Memoized to prevent re-renders in rule lists
@@ -21,7 +22,8 @@ export const RuleCard: React.FC<RuleCardProps> = memo(({
     icon, 
     color,
     actionLabel,
-    onAction
+    onAction,
+    description
 }) => {
     // Memoize style objects to prevent recreation on each render
     const containerStyle = useMemo(() => ({ 
@@ -82,6 +84,12 @@ export const RuleCard: React.FC<RuleCardProps> = memo(({
                 <div style={statusStyle}>
                     {statusLabel}
                 </div>
+                {/* Description */}
+                {description && (
+                    <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.5)', marginTop: '4px', lineHeight: '1.2' }}>
+                        {description}
+                    </div>
+                )}
             </div>
 
             {actionLabel && (
