@@ -5,7 +5,12 @@ export type AutoModRuleType =
     | 'TRUST_CHECK' 
     | 'KEYWORD_BLOCK' 
     | 'WHITELIST_CHECK' 
-    | 'BAN_EVASION_CHECK';
+    | 'BAN_EVASION_CHECK'
+    | 'AGE_VERIFICATION'
+    | 'BLACKLISTED_GROUPS'
+    | 'INSTANCE_18_GUARD'
+    | 'INSTANCE_PERMISSION_GUARD'
+    | 'CLOSE_ALL_INSTANCES';
 
 export interface AutoModRuleConfig {
     // For AGE_CHECK

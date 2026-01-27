@@ -133,6 +133,7 @@ export interface VRCInstance {
     groupAccessType?: string;
     active?: boolean;
     location?: string;
+    ageGate?: boolean; // 18+ age verification required (available in getInstance API)
     [key: string]: unknown;
 }
 
@@ -152,6 +153,7 @@ export interface VRCWorld {
     visits?: number;
     created_at?: string | Date;
     updated_at?: string | Date;
+    ageGate?: boolean; // 18+ age verification required
     [key: string]: unknown;
 }
 
@@ -640,6 +642,11 @@ export const vrchatApiService = {
                 path: { groupId }
             });
             const instances = extractArray(response.data || response) as VRCInstance[];
+
+            // Log a sample instance for debugging age gate structure
+            if (instances.length > 0) {
+                logger.debug(`[VRChatAPI] Sample instance structure:`, JSON.stringify(instances[0], null, 2));
+            }
 
             return instances;
         }, `getGroupInstances:${groupId}`);
