@@ -10,9 +10,9 @@ import { CustomCursor } from "./components/ui/CustomCursor.tsx";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <CustomCursor />
     <ErrorBoundary>
       <ThemeProvider>
+        <CustomCursor />
         <App />
       </ThemeProvider>
     </ErrorBoundary>
