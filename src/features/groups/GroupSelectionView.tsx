@@ -325,6 +325,7 @@ export const GroupSelectionView: React.FC = memo(() => {
   // Derived Stats
   const totalGroups = myGroups.length;
   const activeInstances = myGroups.reduce((acc, g) => acc + (g.activeInstanceCount || 0), 0);
+
   const roamingActive = currentWorldId && (!currentGroupId || !myGroups.some(g => g.id === currentGroupId));
 
   // Responsive Check
