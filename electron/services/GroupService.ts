@@ -37,14 +37,11 @@ export function setupGroupHandlers() {
 
         // STAGE 1: Check if we have cached authorized groups already
         if (groupAuthorizationService.isInitialized()) {
-            const cachedGroups = groupAuthorizationService.getAllowedGroupIds();
-            if (cachedGroups.length > 0) {
-                logger.info(`[PERF] Returning ${cachedGroups.length} cached groups instantly (Stage 1)`);
+            const cachedGroupIds = groupAuthorizationService.getAllowedGroupIds();
+            const cachedFullObjects = groupAuthorizationService.getCachedGroupObjects();
 
-                // We return the IDs immediately so the UI can "unlock"
-                // The full objects will arrive via the background refresh (Stage 2)
-                // or we can try to return what we have in memory if we stored the objects too.
-                // For now, returning success:true with whatever we have.
+            if (cachedGroupIds.length > 0) {
+                logger.info(`[PERF] Returning ${cachedGroupIds.length} cached groups instantly (Stage 1)`);
 
                 // Trigger Stage 2 refresh in background
                 setTimeout(() => {
@@ -53,11 +50,20 @@ export function setupGroupHandlers() {
                     });
                 }, 100);
 
-                // We return a set of minimal group objects if we don't have the full ones cached
-                // Ideally the authorization service stores the full objects it authorized last time
+                // Return full cached objects if available, otherwise return minimal placeholders
+                if (cachedFullObjects.length > 0) {
+                    logger.info(`[PERF] Returning ${cachedFullObjects.length} full cached group objects with images`);
+                    return {
+                        success: true,
+                        groups: cachedFullObjects,
+                        isPartial: true // Still mark as partial so UI knows a refresh is coming
+                    };
+                }
+
+                // Fallback: minimal objects (no images, but UI won't be stuck)
                 return {
                     success: true,
-                    groups: cachedGroups.map(id => ({ id, name: 'Loading...', shortCode: '' })),
+                    groups: cachedGroupIds.map(id => ({ id, name: 'Loading...', shortCode: '' })),
                     isPartial: true
                 };
             }

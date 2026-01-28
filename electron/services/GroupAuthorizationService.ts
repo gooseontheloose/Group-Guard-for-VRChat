@@ -65,6 +65,10 @@ class GroupAuthorizationService {
     // Set of group IDs where the user has moderation permissions
     private allowedGroupIds: Set<string> = new Set();
 
+    // Cached FULL group objects for instant UI display (with images, names, etc.)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    private cachedGroupObjects: Map<string, any> = new Map();
+
     // Persistent store for allowed groups (for instant startup)
     private store = new Store({ name: 'group-authorization-cache' });
 
@@ -103,14 +107,25 @@ class GroupAuthorizationService {
     private loadPersistedGroups(): void {
         try {
             const cached = this.store.get('allowedGroupIds') as string[];
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const cachedObjects = this.store.get('cachedGroupObjects') as any[];
+
             if (Array.isArray(cached) && cached.length > 0) {
                 this.allowedGroupIds = new Set(cached.filter(id => id && id.startsWith('grp_')));
                 this.initialized = true;
                 logger.info(`[SECURITY] Loaded ${this.allowedGroupIds.size} allowed groups from disk cache`);
 
+                // Load full group objects if available
+                if (Array.isArray(cachedObjects) && cachedObjects.length > 0) {
+                    for (const g of cachedObjects) {
+                        if (g?.id && g.id.startsWith('grp_')) {
+                            this.cachedGroupObjects.set(g.id, g);
+                        }
+                    }
+                    logger.info(`[SECURITY] Loaded ${this.cachedGroupObjects.size} full group objects from disk cache`);
+                }
+
                 // Emit event early to unlock UI
-                // We'll emit an empty array of group objects just to signal initialization
-                // if other services need the actual objects, they'll wait for the network fetch
                 serviceEventBus.emit('groups-cache-ready', { groupIds: Array.from(this.allowedGroupIds) });
             }
         } catch (e) {
@@ -124,9 +139,33 @@ class GroupAuthorizationService {
     private persistGroups(): void {
         try {
             this.store.set('allowedGroupIds', Array.from(this.allowedGroupIds));
+            // Also persist the full group objects for instant display on next startup
+            this.store.set('cachedGroupObjects', Array.from(this.cachedGroupObjects.values()));
         } catch (e) {
             logger.error('[SECURITY] Failed to persist groups:', e);
         }
+    }
+
+    /**
+     * Get cached full group objects (for Stage 1 instant display)
+     */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    public getCachedGroupObjects(): any[] {
+        return Array.from(this.cachedGroupObjects.values());
+    }
+
+    /**
+     * Update the group object cache (called after Stage 2 refresh)
+     */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    public updateGroupObjectCache(groups: any[]): void {
+        for (const g of groups) {
+            const id = g?.id || g?.groupId;
+            if (id && id.startsWith('grp_')) {
+                this.cachedGroupObjects.set(id, g);
+            }
+        }
+        this.persistGroups();
     }
 
     /**
@@ -147,26 +186,51 @@ class GroupAuthorizationService {
             return [];
         }
 
+        // OPTIMIZATION: Prioritize owner groups first (no API calls needed)
+        const ownerGroups: GroupMembershipData[] = [];
+        const needsPermCheck: GroupMembershipData[] = [];
+
         for (const g of groups) {
             const groupId = g.groupId || g.id;
             if (!groupId || !groupId.startsWith('grp_')) {
                 continue;
             }
 
-            // Check if user is owner
+            // Check if user is owner - no API call needed
             const isOwner = g.ownerId === userId || g.group?.ownerId === userId;
-
             if (isOwner) {
-                moderatableGroups.push(g);
-                continue;
+                ownerGroups.push(g);
+            } else {
+                needsPermCheck.push(g);
             }
+        }
+
+        // Add owner groups immediately
+        moderatableGroups.push(...ownerGroups);
+        logger.info(`[SECURITY] Found ${ownerGroups.length} owner groups (no API needed), ${needsPermCheck.length} need permission check`);
+
+        // RATE LIMITING: Process non-owner groups in batches with delays
+        const BATCH_SIZE = 10;
+        const DELAY_BETWEEN_GROUPS = 250; // 250ms between each group
+
+        for (let i = 0; i < needsPermCheck.length; i++) {
+            const g = needsPermCheck[i];
+            const groupId = g.groupId || g.id;
 
             // Check for moderation permissions via roles
-            const hasMod = await this.checkModPermissions(groupId, userId, g);
+            const hasMod = await this.checkModPermissions(groupId!, userId, g);
             if (hasMod) {
                 moderatableGroups.push(g);
             }
+
+            // Add delay after each group to prevent rate limiting
+            // Longer delay after each batch
+            if (i < needsPermCheck.length - 1) {
+                const isEndOfBatch = (i + 1) % BATCH_SIZE === 0;
+                await this.delay(isEndOfBatch ? DELAY_BETWEEN_GROUPS * 3 : DELAY_BETWEEN_GROUPS);
+            }
         }
+
 
         // Map the groups to ensure 'id' is the Group ID (grp_), not the Member ID (gmem_)
         const mappedGroups = moderatableGroups.map((g) => {
@@ -180,6 +244,13 @@ class GroupAuthorizationService {
                     id: g.groupId,
                     _memberId: g.id,
                     name: innerGroup.name || g.group?.name || groupObj.name || 'Unknown Group',
+                    // Ensure image URLs are extracted from the inner group object
+                    iconUrl: innerGroup.iconUrl || groupObj.iconUrl,
+                    iconId: innerGroup.iconId || groupObj.iconId,
+                    bannerUrl: innerGroup.bannerUrl || groupObj.bannerUrl,
+                    bannerId: innerGroup.bannerId || groupObj.bannerId,
+                    shortCode: innerGroup.shortCode || groupObj.shortCode || '',
+                    discriminator: innerGroup.discriminator || groupObj.discriminator,
                     onlineMemberCount: innerGroup.onlineMemberCount ?? groupObj.onlineMemberCount,
                     activeInstanceCount: innerGroup.activeInstanceCount ?? groupObj.activeInstanceCount
                 };
@@ -192,7 +263,10 @@ class GroupAuthorizationService {
             .map((g) => g.id || g.groupId)
             .filter((id): id is string => !!id && id.startsWith('grp_'));
         this.setAllowedGroups(groupIds);
-        this.persistGroups();
+
+        // Update the full group object cache for Stage 1 instant display on next startup
+        this.updateGroupObjectCache(mappedGroups);
+        // Note: persistGroups is called inside updateGroupObjectCache
 
         // Emit filtered groups for other services
         logger.info(`[SECURITY] Authorized ${mappedGroups.length} moderatable groups`);
@@ -234,35 +308,93 @@ class GroupAuthorizationService {
         }
 
         // Fetch group roles and check for moderation permissions
-        try {
-            // Use cache if available
-            let roles = this.roleCache.get(groupId);
+        // Use retry with exponential backoff since VRChat returns garbage under rate limits
+        const roles = await this.fetchRolesWithRetry(groupId, client);
 
-            if (!roles) {
-                const rolesResponse = await client.getGroupRoles({ path: { groupId } });
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                roles = (rolesResponse.data || rolesResponse || []) as any[];
-                this.roleCache.set(groupId, roles);
-            }
-
-            for (const roleId of userRoleIds) {
-                const role = roles.find((r: { id?: string }) => r.id === roleId);
-                if (role && role.permissions && Array.isArray(role.permissions)) {
-                    const hasModPerm = role.permissions.some((p: string) =>
-                        MODERATION_PERMISSIONS.includes(p)
-                    );
-                    if (hasModPerm) {
-                        return true;
-                    }
-                }
-            }
-
-            return false;
-        } catch (e) {
-            logger.warn(`[SECURITY] Failed to fetch roles for group ${groupId}:`, e);
+        // If we couldn't get valid roles after retries, fail safely
+        if (!roles) {
+            logger.warn(`[SECURITY] Could not fetch valid roles for group ${groupId} after retries`);
             return false;
         }
+
+        for (const roleId of userRoleIds) {
+            const role = roles.find((r: { id?: string }) => r.id === roleId);
+            if (role && role.permissions && Array.isArray(role.permissions)) {
+                const hasModPerm = role.permissions.some((p: string) =>
+                    MODERATION_PERMISSIONS.includes(p)
+                );
+                if (hasModPerm) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
+
+    /**
+     * Fetch roles with retry and exponential backoff.
+     * VRChat API returns garbage (empty objects, partial responses, HTML) under rate limits.
+     */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    private async fetchRolesWithRetry(groupId: string, client: any, attempt = 1): Promise<any[] | null> {
+        const MAX_ATTEMPTS = 5;
+        const BASE_DELAY = 300; // 300ms base delay
+
+        // Check cache first
+        const cached = this.roleCache.get(groupId);
+        if (cached && Array.isArray(cached)) {
+            return cached;
+        }
+
+        try {
+            // Add delay between fetches to prevent rate limit storms
+            // Delay increases with each attempt
+            if (attempt > 1) {
+                await this.delay(BASE_DELAY * attempt);
+            }
+
+            const rolesResponse = await client.getGroupRoles({ path: { groupId } });
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const roles = (rolesResponse.data || rolesResponse) as any;
+
+            // TYPE GUARD: VRChat sometimes returns garbage instead of 429
+            if (!Array.isArray(roles)) {
+                logger.warn(`[SECURITY] Roles response for ${groupId} is not an array (attempt ${attempt}/${MAX_ATTEMPTS}): ${typeof roles}`);
+
+                if (attempt >= MAX_ATTEMPTS) {
+                    return null;
+                }
+
+                // Exponential backoff retry
+                await this.delay(BASE_DELAY * Math.pow(2, attempt));
+                return this.fetchRolesWithRetry(groupId, client, attempt + 1);
+            }
+
+            // Cache the valid response
+            this.roleCache.set(groupId, roles);
+            return roles;
+
+        } catch (e) {
+            logger.warn(`[SECURITY] Failed to fetch roles for group ${groupId} (attempt ${attempt}/${MAX_ATTEMPTS}):`, e);
+
+            if (attempt >= MAX_ATTEMPTS) {
+                return null;
+            }
+
+            // Exponential backoff retry on error
+            await this.delay(BASE_DELAY * Math.pow(2, attempt));
+            return this.fetchRolesWithRetry(groupId, client, attempt + 1);
+        }
+    }
+
+    /**
+     * Simple delay helper
+     */
+    private delay(ms: number): Promise<void> {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
 
     /**
      * Updates the list of allowed groups.
