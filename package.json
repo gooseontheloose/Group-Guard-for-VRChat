@@ -1,7 +1,7 @@
 {
   "name": "vrchat-group-guard",
   "private": true,
-  "version": "1.0.8",
+  "version": "1.0.9",
   "description": "A powerful VRChat group moderation and management tool",
   "author": "VRChat Group Guard Team",
   "license": "MIT",
@@ -39,7 +39,7 @@
       "icon": "build/icon.png"
     },
     "nsis": {
-      "artifactName": "${productName} Setup ${version}.exe"
+      "artifactName": "VRChat.Group.Guard.Setup.${version}.exe"
     },
     "publish": [
       "github"
