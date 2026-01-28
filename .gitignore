@@ -41,6 +41,7 @@ debug_*
 Thumbs.db
 .idea/
 .vscode/
+nul
 
 # Agent & Reference
 .agent/
