@@ -93,7 +93,6 @@ export interface LogoutOptions {
 export interface GroupsResult {
   success: boolean;
   groups?: VRChatGroup[];
-  totalFound?: number;
   error?: string;
 }
 
@@ -298,6 +297,64 @@ export interface AutoModUserInput {
   pronouns?: string;
 }
 
+
+// Friendship Manager Types
+export interface GameLogEntry {
+  timestamp: string;
+  worldName: string;
+  worldId: string;
+  instanceId: string;
+  location: string;
+  duration?: number;
+  leaveTimestamp?: string;
+  userCountAtJoin?: number;
+  notes?: string;
+}
+
+export interface FriendLocation {
+  userId: string;
+  displayName: string;
+  status: string; // 'active', 'busy', 'join me', 'offline'
+  location: string;
+  worldName?: string;
+  lastUpdated: string;
+  userIcon?: string;
+  profilePicOverride?: string;
+  currentAvatarThumbnailImageUrl?: string;
+}
+
+export interface SocialFeedEntry {
+  id: string;
+  type: 'online' | 'offline' | 'location' | 'status' | 'add' | 'remove' | 'notification' | 'avatar';
+  userId: string;
+  displayName: string;
+  timestamp: string;
+  details?: string;
+  data?: Record<string, unknown>;
+}
+
+export interface PlayerLogEntry {
+  id: string;
+  timestamp: string;
+  type: 'join' | 'leave';
+  displayName: string;
+  userId?: string;
+  worldName?: string;
+  worldId?: string;
+  instanceId?: string;
+  location?: string;
+}
+
+export interface RelationshipEvent {
+  id: string;
+  timestamp: string;
+  type: 'add' | 'remove' | 'name_change';
+  userId: string;
+  displayName: string;
+  previousName?: string;
+  avatarUrl?: string;
+}
+
 export interface OscConfig {
   enabled: boolean;
   senderIp: string;
@@ -361,18 +418,18 @@ export interface ElectronAPI {
   // Groups API
   getMyGroups: () => Promise<GroupsResult>;
   getGroupDetails: (groupId: string) => Promise<{ success: boolean; group?: VRChatGroup; error?: string }>;
+  getGroupPublicDetails: (groupId: string) => Promise<{ success: boolean; group?: VRChatGroup; error?: string }>;
   getGroupMembers: (groupId: string, offset?: number, n?: number) => Promise<{ success: boolean; members?: GroupMember[]; error?: string }>;
   searchGroupMembers: (groupId: string, query: string, n?: number) => Promise<{ success: boolean; members?: GroupMember[]; error?: string }>;
   getGroupRequests: (groupId: string) => Promise<{ success: boolean; requests?: GroupRequest[]; error?: string }>;
   respondToGroupRequest: (groupId: string, userId: string, action: 'accept' | 'deny') => Promise<{ success: boolean; error?: string }>;
   getGroupBans: (groupId: string) => Promise<{ success: boolean; bans?: GroupBan[]; error?: string }>;
   getGroupInstances: (groupId: string) => Promise<{ success: boolean; instances?: VRChatInstance[]; error?: string }>;
-  getAllGroupInstances: () => Promise<{ success: boolean; counts?: Record<string, number>; error?: string }>;
+  onGroupsUpdated: (callback: (data: { groups: any[] }) => void) => () => void;
+  onGroupsCacheReady: (callback: (data: { groupIds: string[] }) => void) => () => void;
+  onGroupVerified: (callback: (data: { group: any }) => void) => () => void;
   banUser: (groupId: string, userId: string) => Promise<{ success: boolean; error?: string }>;
   unbanUser: (groupId: string, userId: string) => Promise<{ success: boolean; error?: string }>;
-
-  onGroupsUpdated: (callback: (data: { group: any }) => void) => () => void;
-  onGroupsListUpdated: (callback: (data: { groups: any[] }) => void) => () => void;
 
   // Role Management
   getGroupRoles: (groupId: string) => Promise<{ success: boolean; roles?: unknown[]; error?: string }>;
@@ -558,6 +615,25 @@ export interface ElectronAPI {
     onUpdate: (callback: (data: { entities: WatchedEntity[]; tags: ModerationTag[] }) => void) => () => void;
   };
 
+  // Staff API (shares data with AutoMod whitelist)
+  staff: {
+    getMembers: (groupId: string) => Promise<{ id: string; name: string; rules: string[] }[]>;
+    addMember: (groupId: string, userId: string) => Promise<{ success: boolean; error?: string }>;
+    removeMember: (groupId: string, userId: string) => Promise<{ success: boolean; error?: string }>;
+    getSettings: (groupId: string) => Promise<{
+      skipAutoModScans: boolean;
+      preventKicks: boolean;
+      preventBans: boolean;
+      allowAllInstances: boolean;
+    }>;
+    setSettings: (groupId: string, settings: {
+      skipAutoModScans?: boolean;
+      preventKicks?: boolean;
+      preventBans?: boolean;
+      allowAllInstances?: boolean;
+    }) => Promise<{ success: boolean; error?: string }>;
+  };
+
   // Settings API
   settings: {
     get: () => Promise<AppSettings>;
@@ -582,6 +658,58 @@ export interface ElectronAPI {
     bulkFriendFromJson: (jsonPath: string, delayMs?: number) => Promise<{ success: boolean; sent?: number; failed?: number; skipped?: number; total?: number; error?: string; errors?: string[] }>;
     onBulkFriendProgress: (callback: (data: { sent: number; skipped: number; failed: number; total: number; current?: string; done?: boolean }) => void) => () => void;
   };
+
+  // Friendship Manager API
+  friendship: {
+    getStatus: () => Promise<{ initialized: boolean }>;
+    getGameLog: (limit?: number) => Promise<GameLogEntry[]>;
+    getPlayerLog: (options?: { limit?: number; search?: string; type?: 'join' | 'leave' | 'all' }) => Promise<PlayerLogEntry[]>;
+    getFriendLocations: () => Promise<FriendLocation[]>;
+    getSocialFeed: (limit?: number) => Promise<SocialFeedEntry[]>;
+    getRelationshipEvents: (limit?: number) => Promise<RelationshipEvent[]>;
+    refreshFriends: () => Promise<{ success: boolean; count?: number; error?: string }>;
+    refreshRelationships: () => Promise<{ success: boolean; error?: string }>;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    onUpdate: (callback: (data: any) => void) => () => void;
+    getPlayerStats: (userId: string) => Promise<{
+      success: boolean;
+      stats?: {
+        firstSeen: string;
+        lastSeen: string;
+        encounterCount: number;
+        timeSpent: number;
+        commonWorlds: { name: string; count: number; id: string }[];
+      };
+      error?: string;
+    }>;
+    getWorldStats: (worldId: string) => Promise<{
+      success: boolean;
+      stats?: {
+        visitCount: number;
+        timeSpent: number;
+        lastVisited: string;
+        lastInstanceId?: string;
+      };
+      error?: string;
+    }>;
+    getFriendsList: () => Promise<FriendListItem[]>;
+    getMutualsBatch: (userIds: string[]) => Promise<Record<string, { friends: number; groups: number }>>;
+  };
+}
+
+export interface FriendListItem extends FriendLocation {
+  encounterCount: number;
+  timeSpent: number;
+  lastSeen: string;
+  dateKnown: string;
+  friendScore: number;
+  // New fields for enhanced display
+  mutualFriends?: number;
+  mutualGroups?: number;
+  pronouns?: string;
+  isVRCPlus?: boolean;
+  isAgeVerified?: boolean;
+  platform?: string;
 }
 
 declare global {

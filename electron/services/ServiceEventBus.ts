@@ -6,16 +6,46 @@ const logger = log.scope('ServiceEventBus');
 export type ServiceEventType =
     | 'groups-updated'
     | 'groups-raw'
-    | 'groups-initial-loaded'
-    | 'group-found'
-    | 'auth-changed'; // Add more as needed
+    | 'groups-cache-ready'
+    | 'auth-changed' // Add more as needed
+    | 'group-verified'
+    | 'friend-update'
+    | 'friend-state-changed'
+    | 'social-feed-entry-added'
+    | 'player-joined'
+    | 'player-left';
 
 export interface ServiceEventPayloads {
     'groups-updated': { groups: { id: string;[key: string]: unknown }[] };
     'groups-raw': { groups: { id: string;[key: string]: unknown }[]; userId: string };
-    'groups-initial-loaded': { groups: { id: string;[key: string]: unknown }[] };
-    'group-found': { group: { id: string;[key: string]: unknown } };
+    'groups-cache-ready': { groupIds: string[] };
     'auth-changed': { userId: string | null };
+    'group-verified': { group: { id: string;[key: string]: unknown } };
+    'friend-update': { type: string; content: Record<string, unknown>; timestamp: string };
+    'friend-state-changed': {
+        friend: any;
+        previous: any;
+        change: {
+            status: boolean;
+            location: boolean;
+            statusDescription: boolean;
+            representedGroup: boolean;
+            avatar: boolean;
+        };
+    };
+    'social-feed-entry-added': { entry: any };
+    'player-joined': {
+        displayName: string;
+        userId?: string;
+        timestamp: string;
+        isBackfill?: boolean;
+    };
+    'player-left': {
+        displayName: string;
+        userId?: string;
+        timestamp: string;
+        isBackfill?: boolean;
+    };
 }
 
 class ServiceEventBus extends EventEmitter {

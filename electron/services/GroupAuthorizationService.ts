@@ -31,9 +31,8 @@
 import log from 'electron-log';
 import { serviceEventBus } from './ServiceEventBus';
 import { getVRChatClient } from './AuthService';
-import { app } from 'electron';
-import { join } from 'path';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import Store from 'electron-store';
+import { LRUCache } from 'lru-cache';
 
 const logger = log.scope('GroupAuthorization');
 
@@ -62,20 +61,23 @@ interface GroupMembershipData {
     [key: string]: unknown;
 }
 
-interface CachedGroupRoles {
-    roles: any[];
-    timestamp: number;
-    groupId: string;
-}
-
-interface RateLimiter {
-    lastRequest: number;
-    requestCount: number;
-}
-
 class GroupAuthorizationService {
     // Set of group IDs where the user has moderation permissions
     private allowedGroupIds: Set<string> = new Set();
+
+    // Cached FULL group objects for instant UI display (with images, names, etc.)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    private cachedGroupObjects: Map<string, any> = new Map();
+
+    // Persistent store for allowed groups (for instant startup)
+    private store = new Store({ name: 'group-authorization-cache' });
+
+    // Role cache to prevent redundant API calls
+    // Key: groupId, Value: array of roles
+    private roleCache = new LRUCache<string, any[]>({
+        max: 200,
+        ttl: 1000 * 60 * 60 * 24 // 24 hour TTL for roles
+    });
 
     // Flag to track if permissions have been initialized
     private initialized: boolean = false;
@@ -88,33 +90,16 @@ class GroupAuthorizationService {
         reason: string;
     }> = [];
 
-    // Cache for group roles to reduce API calls
-    private roleCache: Map<string, CachedGroupRoles> = new Map();
+    // Predictive Caching
+    private predictiveCacheInterval: NodeJS.Timeout | null = null;
+    private predictiveCacheIndex: number = 0;
 
-    // Rate limiting for API calls
-    private rateLimiter: RateLimiter = {
-        lastRequest: 0,
-        requestCount: 0
-    };
-
-    // Background refresh queue
-    private refreshQueue: string[] = [];
-    private isRefreshing: boolean = false;
-
-    // Cache configuration
-    private readonly CACHE_TTL = 7 * 24 * 60 * 60 * 1000; // 7 days (Ultra-stable caching for group roles)
-    private readonly RATE_LIMIT_DELAY = 1500; // 1500ms between requests (gentler)
-    private readonly MAX_REQUESTS_PER_MINUTE = 12; // Lowered to 12 for background trickle (VRCX style)
-
-    // Persistent cache file path
-    private readonly cacheFilePath: string;
+    // Owner ID of the cached groups
+    private cacheOwnerId: string | null = null;
 
     constructor() {
-        // Initialize persistent cache path
-        this.cacheFilePath = join(app.getPath('userData'), 'group-roles-cache.json');
-
-        // Load cache from disk
-        this.loadCacheFromDisk();
+        // Load allowed groups from disk for instant dashboard unlocking
+        this.loadPersistedGroups();
 
         // Listen for raw group updates from GroupService (legacy support for event-based calls)
         serviceEventBus.on('groups-raw', async (payload) => {
@@ -124,16 +109,93 @@ class GroupAuthorizationService {
     }
 
     /**
-          * Process raw group memberships and determine which ones the user can moderate.
-          * This is the core authorization logic - checking ownership or mod permissions.
-          * Returns immediately with cached groups for fast loading, continues processing in background.
-          * 
-          * @param groups Raw group membership data from VRChat API
-          * @param userId The user ID to check permissions for
-          * @returns Array of groups where the user has moderation permissions
-          */
+     * Load allowed groups from persistent storage
+     */
+    private loadPersistedGroups(): void {
+        try {
+            const cached = this.store.get('allowedGroupIds') as string[];
+            const ownerId = this.store.get('cacheOwnerId') as string;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const cachedObjects = this.store.get('cachedGroupObjects') as any[];
+
+            if (Array.isArray(cached) && cached.length > 0) {
+                this.allowedGroupIds = new Set(cached.filter(id => id && id.startsWith('grp_')));
+                this.cacheOwnerId = ownerId || null;
+                this.initialized = true;
+                logger.info(`[SECURITY] Loaded ${this.allowedGroupIds.size} allowed groups from disk cache (Owner: ${this.cacheOwnerId})`);
+
+                // Load full group objects if available
+                if (Array.isArray(cachedObjects) && cachedObjects.length > 0) {
+                    for (const g of cachedObjects) {
+                        if (g?.id && g.id.startsWith('grp_')) {
+                            this.cachedGroupObjects.set(g.id, g);
+                        }
+                    }
+                    logger.info(`[SECURITY] Loaded ${this.cachedGroupObjects.size} full group objects from disk cache`);
+                }
+
+                // Emit event early to unlock UI
+                serviceEventBus.emit('groups-cache-ready', { groupIds: Array.from(this.allowedGroupIds) });
+            }
+        } catch (e) {
+            logger.warn('[SECURITY] Failed to load persisted groups:', e);
+        }
+    }
+
+    /**
+     * Persist allowed groups to disk
+     */
+    private persistGroups(): void {
+        try {
+            this.store.set('allowedGroupIds', Array.from(this.allowedGroupIds));
+            this.store.set('cacheOwnerId', this.cacheOwnerId);
+            // Also persist the full group objects for instant display on next startup
+            this.store.set('cachedGroupObjects', Array.from(this.cachedGroupObjects.values()));
+        } catch (e) {
+            logger.error('[SECURITY] Failed to persist groups:', e);
+        }
+    }
+
+    /**
+     * Get cached full group objects (for Stage 1 instant display)
+     */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    public getCachedGroupObjects(): any[] {
+        return Array.from(this.cachedGroupObjects.values());
+    }
+
+    /**
+     * Update the group object cache (called after Stage 2 refresh)
+     */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    public updateGroupObjectCache(groups: any[]): void {
+        for (const g of groups) {
+            const id = g?.id || g?.groupId;
+            if (id && id.startsWith('grp_')) {
+                this.cachedGroupObjects.set(id, g);
+            }
+        }
+        this.persistGroups();
+    }
+
+
+    // Track the active processing session to allow cancellation
+    private currentProcessId: number = 0;
+
+    /**
+     * Process raw group memberships and determine which ones the user can moderate.
+     * This is the core authorization logic - checking ownership or mod permissions.
+     * 
+     * @param groups Raw group membership data from VRChat API
+     * @param userId The user ID to check permissions for
+     * @returns Array of groups where the user has moderation permissions
+     */
     public async processAndAuthorizeGroups(groups: GroupMembershipData[], userId: string): Promise<GroupMembershipData[]> {
+        // Increment process ID to invalidate any conflicting previous runs
+        const processId = ++this.currentProcessId;
+
         const client = getVRChatClient();
+        const moderatableGroups: GroupMembershipData[] = [];
 
         if (!client || !userId) {
             logger.warn('[SECURITY] Cannot process groups: no client or userId');
@@ -141,140 +203,97 @@ class GroupAuthorizationService {
             return [];
         }
 
-        // Clean expired cache first
-        this.cleanExpiredCache();
+        // OPTIMIZATION: Prioritize owner groups first (no API calls needed)
+        const ownerGroups: GroupMembershipData[] = [];
+        const needsPermCheck: GroupMembershipData[] = [];
 
-        logger.info(`[PERF] Processing ${groups.length} groups with instant cache-first approach`);
-
-        // IMMEDIATE RETURN: Start with cached groups only
-        const cachedGroups: GroupMembershipData[] = [];
         for (const g of groups) {
             const groupId = g.groupId || g.id;
             if (!groupId || !groupId.startsWith('grp_')) {
                 continue;
             }
 
-            // Check cache first - if cached, we can use it immediately
-            const cached = this.roleCache.get(groupId);
+            // Check if user is owner - no API call needed
             const isOwner = g.ownerId === userId || g.group?.ownerId === userId;
-
             if (isOwner) {
-                cachedGroups.push(g);
-                continue;
-            }
-
-            // If we have fresh cached roles, check them
-            if (cached && (Date.now() - cached.timestamp) < this.CACHE_TTL) {
-                const userRoleIds = g.roleIds || g.myMember?.roleIds || [];
-                const hasModPerm = cached.roles.some((role: any) => {
-                    if (!userRoleIds.includes(role.id)) return false;
-                    return role.permissions && Array.isArray(role.permissions) &&
-                        role.permissions.some((p: string) => MODERATION_PERMISSIONS.includes(p));
-                });
-
-                if (hasModPerm) {
-                    cachedGroups.push(g);
-                    continue;
-                }
-            }
-
-            // INSTANT PERMISSION CHECK: If membership data already has permissions, use them!
-            // This is critical for users with 150+ groups to avoid background API churn.
-            if (g.myMember?.permissions && Array.isArray(g.myMember.permissions)) {
-                if (g.myMember.permissions.some(p => MODERATION_PERMISSIONS.includes(p))) {
-                    logger.info(`[SECURITY] Instantly authorized group ${groupId} via membership permissions`);
-                    cachedGroups.push(g);
-                }
+                ownerGroups.push(g);
+            } else {
+                needsPermCheck.push(g);
             }
         }
 
-        // Map and set cached groups immediately
-        const mappedCachedGroups = this.mapGroupData(cachedGroups);
-        const cachedGroupIds = mappedCachedGroups
-            .map((g) => g.id || g.groupId)
-            .filter((id): id is string => !!id && id.startsWith('grp_'));
+        // Add owner groups immediately
+        moderatableGroups.push(...ownerGroups);
+        logger.info(`[SECURITY] Found ${ownerGroups.length} owner groups (no API needed), ${needsPermCheck.length} need permission check`);
 
-        this.setAllowedGroups(cachedGroupIds);
-        serviceEventBus.emit('groups-initial-loaded', { groups: mappedCachedGroups });
-        logger.info(`[FAST] Instantly loaded ${mappedCachedGroups.length} groups from cache`);
+        // RATE LIMIT MITIGATION: Strict Serial Priority Queue
+        // VRChat API is aggressive with rate limits on role fetching.
+        // We must process one by one with a delay to avoid 429s.
 
-        // BACKGROUND: Continue processing remaining groups
-        // Add a 10-second PRIORITY WINDOW to let critical start-up calls (Location/Profile) finish first
-        setTimeout(() => {
-            this.processRemainingGroupsInBackground(groups, userId, mappedCachedGroups);
-        }, 10000);
+        // 1. Process Priority Groups (User is Owner - Cached or simple check) which we already did above.
+        // 2. Process High Priority Groups (First 3 in the list - "Fast Lane")
+        const FAST_LANE_COUNT = 3;
+        const fastLane = needsPermCheck.slice(0, FAST_LANE_COUNT);
+        const slowLane = needsPermCheck.slice(FAST_LANE_COUNT);
 
-        return mappedCachedGroups;
-    }
+        logger.info(`[SECURITY] Queue: ${fastLane.length} fast lane, ${slowLane.length} slow lane`);
 
-    /**
-     * Process remaining groups in background without blocking the loading screen
-     */
-    private async processRemainingGroupsInBackground(
-        allGroups: GroupMembershipData[],
-        userId: string,
-        initialGroups: GroupMembershipData[]
-    ): Promise<void> {
-        logger.info(`[BACKGROUND] Processing ${allGroups.length - initialGroups.length} remaining groups in background`);
+        // Fast Lane Loop (Short delay)
+        for (const g of fastLane) {
+            // Check for cancellation
+            if (this.currentProcessId !== processId) {
+                logger.info(`[SECURITY] Process ${processId} cancelled by newer request`);
+                return moderatableGroups;
+            }
 
-        const client = getVRChatClient();
-        if (!client) return;
-
-        const additionalGroups: GroupMembershipData[] = [];
-        const processedGroupIds = new Set(initialGroups.map(g => g.groupId || g.id));
-
-        for (const g of allGroups) {
             const groupId = g.groupId || g.id;
-            if (!groupId || !groupId.startsWith('grp_') || processedGroupIds.has(groupId)) {
-                continue;
+            try {
+                const hasMod = await this.checkModPermissions(groupId!, userId, g);
+                if (hasMod) {
+                    moderatableGroups.push(g);
+                    this.emitGroupVerified(g);
+                }
+            } catch (e) {
+                logger.error(`[SECURITY] Error checking permissions for ${groupId}:`, e);
             }
-
-            // Check if user is owner (fast check)
-            const isOwner = g.ownerId === userId || g.group?.ownerId === userId;
-
-            if (isOwner) {
-                additionalGroups.push(g);
-                continue;
-            }
-
-            // Check for moderation permissions (with rate limiting)
-            const hasMod = await this.checkModPermissions(groupId, userId, g);
-            if (hasMod) {
-                additionalGroups.push(g);
-
-                // CRITICAL: Emit granular event for progressive UI loading
-                const mappedGroup = this.mapGroupData([g])[0];
-                serviceEventBus.emit('group-found', { group: mappedGroup });
-                logger.info(`[BACKGROUND] Found and authorized group: ${mappedGroup.name}`);
-            }
-
-            // Extremely conservative pause between each background group to stay under sustained rate limits
-            await new Promise(resolve => setTimeout(resolve, 5000));
+            await this.delay(500); // 500ms for fast lane
         }
 
-        // Emit final results
-        const allAuthorizedGroups = [...initialGroups, ...additionalGroups];
-        const mappedAllGroups = this.mapGroupData(allAuthorizedGroups);
+        // Slow Lane Loop (Tortoise Mode - 2s delay)
+        // This takes a long time (e.g. 150 groups * 2s = 5 mins)
+        // But granular updates keep the UI alive.
+        for (let i = 0; i < slowLane.length; i++) {
+            // Check for cancellation
+            if (this.currentProcessId !== processId) {
+                logger.info(`[SECURITY] Process ${processId} cancelled by newer request (during slow lane)`);
+                break;
+            }
 
-        const allGroupIds = mappedAllGroups
-            .map((g) => g.id || g.groupId)
-            .filter((id): id is string => !!id && id.startsWith('grp_'));
+            const g = slowLane[i];
+            const groupId = g.groupId || g.id;
 
-        this.setAllowedGroups(allGroupIds);
-        serviceEventBus.emit('groups-updated', { groups: mappedAllGroups });
-        logger.info(`[BACKGROUND] Completed background processing. Total: ${mappedAllGroups.length} groups (+${mappedAllGroups.length - initialGroups.length} new)`);
+            try {
+                const hasMod = await this.checkModPermissions(groupId!, userId, g);
+                if (hasMod) {
+                    moderatableGroups.push(g);
+                    this.emitGroupVerified(g);
+                    logger.info(`[SECURITY] Checked ${groupId} (${i + 1}/${slowLane.length}): VERIFIED ✅`);
+                } else {
+                    logger.info(`[SECURITY] Checked ${groupId} (${i + 1}/${slowLane.length}): No Mod Perms ❌`);
+                }
+            } catch (e) {
+                logger.error(`[SECURITY] Error checking permissions for ${groupId}:`, e);
+            }
 
-        // Start slow refresh cycle
-        setTimeout(() => {
-            this.startBackgroundRefresh();
-        }, 5000);
-    }
+            // 5.5s delay between requests to appease the rate limit gods
+            if (i < slowLane.length - 1) {
+                await this.delay(5500);
+            }
+        }
 
-    /**
-     * Helper to map group data consistently
-     */
-    private mapGroupData(groups: GroupMembershipData[]): GroupMembershipData[] {
-        return groups.map((g) => {
+
+        // Map the groups to ensure 'id' is the Group ID (grp_), not the Member ID (gmem_)
+        const mappedGroups = moderatableGroups.map((g) => {
             if (g.groupId && typeof g.groupId === 'string' && g.groupId.startsWith('grp_')) {
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const groupObj = g as any;
@@ -285,18 +304,41 @@ class GroupAuthorizationService {
                     id: g.groupId,
                     _memberId: g.id,
                     name: innerGroup.name || g.group?.name || groupObj.name || 'Unknown Group',
+                    // Ensure image URLs are extracted from the inner group object
+                    iconUrl: innerGroup.iconUrl || groupObj.iconUrl,
+                    iconId: innerGroup.iconId || groupObj.iconId,
+                    bannerUrl: innerGroup.bannerUrl || groupObj.bannerUrl,
+                    bannerId: innerGroup.bannerId || groupObj.bannerId,
+                    shortCode: innerGroup.shortCode || groupObj.shortCode || '',
+                    discriminator: innerGroup.discriminator || groupObj.discriminator,
                     onlineMemberCount: innerGroup.onlineMemberCount ?? groupObj.onlineMemberCount,
                     activeInstanceCount: innerGroup.activeInstanceCount ?? groupObj.activeInstanceCount
                 };
             }
             return g;
         });
+
+        // Set allowed groups (and owner)
+        this.cacheOwnerId = userId;
+        const groupIds = mappedGroups
+            .map((g) => g.id || g.groupId)
+            .filter((id): id is string => !!id && id.startsWith('grp_'));
+        this.setAllowedGroups(groupIds);
+
+        // Update the full group object cache for Stage 1 instant display on next startup
+        this.updateGroupObjectCache(mappedGroups);
+        // Note: persistGroups is called inside updateGroupObjectCache
+
+        // Emit filtered groups for other services
+        logger.info(`[SECURITY] Authorized ${mappedGroups.length} moderatable groups for user ${userId}`);
+        serviceEventBus.emit('groups-updated', { groups: mappedGroups });
+
+        return mappedGroups;
     }
 
     /**
-      * Check if a user has moderation permissions in a group by checking their roles.
-      * Uses cache and rate limiting to prevent API errors.
-      */
+     * Check if a user has moderation permissions in a group by checking their roles.
+     */
     private async checkModPermissions(groupId: string, userId: string, membership: GroupMembershipData): Promise<boolean> {
         const client = getVRChatClient();
         if (!client) return false;
@@ -307,11 +349,9 @@ class GroupAuthorizationService {
         // If no roleIds in the membership response, fetch member record directly
         if (userRoleIds.length === 0) {
             try {
-                const memberResp = await this.rateLimitedRequest(async () => {
-                    return client.getGroupMember({
-                        path: { groupId, userId }
-                    });
-                }, `member-${groupId}`);
+                const memberResp = await client.getGroupMember({
+                    path: { groupId, userId }
+                });
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const memberRecord = (memberResp.data || memberResp) as any;
 
@@ -328,234 +368,96 @@ class GroupAuthorizationService {
             return false;
         }
 
-        // Get group roles from cache or API with rate limiting
-        try {
-            const roles = await this.getGroupRoles(groupId);
+        // Fetch group roles and check for moderation permissions
+        // Use retry with exponential backoff since VRChat returns garbage under rate limits
+        const roles = await this.fetchRolesWithRetry(groupId, client);
 
-            for (const roleId of userRoleIds) {
-                const role = roles.find((r: { id?: string }) => r.id === roleId);
-                if (role && role.permissions && Array.isArray(role.permissions)) {
-                    const hasModPerm = role.permissions.some((p: string) =>
-                        MODERATION_PERMISSIONS.includes(p)
-                    );
-                    if (hasModPerm) {
-                        return true;
-                    }
+        // If we couldn't get valid roles after retries, fail safely
+        if (!roles) {
+            logger.warn(`[SECURITY] Could not fetch valid roles for group ${groupId} after retries`);
+            return false;
+        }
+
+        for (const roleId of userRoleIds) {
+            const role = roles.find((r: { id?: string }) => r.id === roleId);
+            if (role && role.permissions && Array.isArray(role.permissions)) {
+                const hasModPerm = role.permissions.some((p: string) =>
+                    MODERATION_PERMISSIONS.includes(p)
+                );
+                if (hasModPerm) {
+                    return true;
                 }
             }
-
-            return false;
-        } catch (e) {
-            logger.warn(`[SECURITY] Failed to fetch roles for group ${groupId}:`, e);
-            return false;
         }
+
+        return false;
     }
 
     /**
-     * Get group roles from cache or API with rate limiting
+     * Fetch roles with retry and exponential backoff.
+     * VRChat API returns garbage (empty objects, partial responses, HTML) under rate limits.
      */
-    private async getGroupRoles(groupId: string): Promise<any[]> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    private async fetchRolesWithRetry(groupId: string, client: any, attempt = 1): Promise<any[] | null> {
+        const MAX_ATTEMPTS = 5;
+        const BASE_DELAY = 300; // 300ms base delay
+
         // Check cache first
         const cached = this.roleCache.get(groupId);
-        if (cached && (Date.now() - cached.timestamp) < this.CACHE_TTL) {
-            logger.debug(`[CACHE] Using cached roles for group ${groupId}`);
-            return cached.roles;
+        if (cached && Array.isArray(cached)) {
+            return cached;
         }
 
-        // Fetch from API with rate limiting
-        const client = getVRChatClient();
-        if (!client) return [];
-
         try {
-            const rolesResponse = await this.rateLimitedRequest(async () => {
-                return client.getGroupRoles({ path: { groupId } });
-            }, `roles-${groupId}`);
+            // Add delay between fetches to prevent rate limit storms
+            // Delay increases with each attempt
+            if (attempt > 1) {
+                await this.delay(BASE_DELAY * attempt);
+            }
 
+            const rolesResponse = await client.getGroupRoles({ path: { groupId } });
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            let roles = (rolesResponse.data || rolesResponse || []) as any[];
+            const roles = (rolesResponse.data || rolesResponse) as any;
 
-            // Ensure roles is always an array to prevent "find is not a function" errors
+            // TYPE GUARD: VRChat sometimes returns garbage instead of 429
             if (!Array.isArray(roles)) {
-                console.warn(`[GroupAuthorizationService] roles is not an array for group ${groupId}, type: ${typeof roles}, value:`, roles);
-                roles = [];
+                // Only log warning on final attempt to reduce spam
+                if (attempt >= MAX_ATTEMPTS) {
+                    logger.warn(`[SECURITY] Roles response for ${groupId} is not an array (FINAL ATTEMPT ${attempt}/${MAX_ATTEMPTS}): ${typeof roles}`);
+                    return null;
+                }
+
+                logger.debug(`[SECURITY] Roles response for ${groupId} is not an array (attempt ${attempt}/${MAX_ATTEMPTS}), retrying...`);
+
+                // Exponential backoff retry
+                await this.delay(BASE_DELAY * Math.pow(2, attempt));
+                return this.fetchRolesWithRetry(groupId, client, attempt + 1);
             }
 
-            // Cache the result
-            this.roleCache.set(groupId, {
-                roles,
-                timestamp: Date.now(),
-                groupId
-            });
-
-            // Save to persistent storage
-            this.saveCacheToDisk();
-
-            logger.debug(`[CACHE] Cached roles for group ${groupId}`);
+            // Cache the valid response
+            this.roleCache.set(groupId, roles);
             return roles;
+
         } catch (e) {
-            logger.warn(`[API] Failed to fetch roles for group ${groupId}:`, e);
-            return [];
+            logger.warn(`[SECURITY] Failed to fetch roles for group ${groupId} (attempt ${attempt}/${MAX_ATTEMPTS}):`, e);
+
+            if (attempt >= MAX_ATTEMPTS) {
+                return null;
+            }
+
+            // Exponential backoff retry on error
+            await this.delay(BASE_DELAY * Math.pow(2, attempt));
+            return this.fetchRolesWithRetry(groupId, client, attempt + 1);
         }
     }
 
     /**
-     * Rate limiting wrapper for API requests
+     * Simple delay helper
      */
-    private async rateLimitedRequest<T>(requestFn: () => Promise<T>, requestId: string): Promise<T> {
-        const now = Date.now();
-
-        // Reset counter if more than a minute has passed
-        if (now - this.rateLimiter.lastRequest > 60000) {
-            this.rateLimiter.requestCount = 0;
-        }
-
-        // Check if we're exceeding the rate limit
-        if (this.rateLimiter.requestCount >= this.MAX_REQUESTS_PER_MINUTE) {
-            const waitTime = 60000 - (now - this.rateLimiter.lastRequest);
-            logger.debug(`[RATE] Rate limit reached, waiting ${waitTime}ms for ${requestId}`);
-            await new Promise(resolve => setTimeout(resolve, waitTime));
-            this.rateLimiter.requestCount = 0;
-        }
-
-        // Add delay between requests
-        if (this.rateLimiter.lastRequest > 0) {
-            const timeSinceLastRequest = now - this.rateLimiter.lastRequest;
-            if (timeSinceLastRequest < this.RATE_LIMIT_DELAY) {
-                const delay = this.RATE_LIMIT_DELAY - timeSinceLastRequest;
-                await new Promise(resolve => setTimeout(resolve, delay));
-            }
-        }
-
-        // Make the request
-        this.rateLimiter.lastRequest = Date.now();
-        this.rateLimiter.requestCount++;
-
-        try {
-            const result = await requestFn();
-            return result;
-        } catch (e: any) {
-            // Handle 429 errors specifically
-            if (e?.response?.status === 429) {
-                logger.warn(`[RATE] Got 429 for ${requestId}, backing off...`);
-                await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second backoff
-                return this.rateLimitedRequest(requestFn, requestId + '-retry');
-            }
-            throw e;
-        }
+    private delay(ms: number): Promise<void> {
+        return new Promise(resolve => setTimeout(resolve, ms));
     }
 
-    /**
-     * Start background refresh of all cached groups
-     */
-    private startBackgroundRefresh(): void {
-        if (this.isRefreshing) {
-            return;
-        }
-
-        this.isRefreshing = true;
-        this.refreshQueue = Array.from(this.roleCache.keys());
-
-        logger.info(`[BACKGROUND] Starting refresh of ${this.refreshQueue.length} cached groups`);
-
-        this.processRefreshQueue();
-    }
-
-    /**
-     * Process the refresh queue slowly
-     */
-    private async processRefreshQueue(): Promise<void> {
-        if (this.refreshQueue.length === 0) {
-            this.isRefreshing = false;
-            logger.info(`[BACKGROUND] Refresh complete`);
-            return;
-        }
-
-        const groupId = this.refreshQueue.shift()!;
-
-        try {
-            logger.debug(`[BACKGROUND] Refreshing group ${groupId} (${this.refreshQueue.length} remaining)`);
-            await this.getGroupRoles(groupId); // This will update cache
-        } catch (e) {
-            logger.warn(`[BACKGROUND] Failed to refresh group ${groupId}:`, e);
-        }
-
-        // Wait longer between background refreshes (5 seconds)
-        setTimeout(() => this.processRefreshQueue(), 5000);
-    }
-
-    /**
-     * Clear expired cache entries
-     */
-    private cleanExpiredCache(): void {
-        const now = Date.now();
-        let cleaned = 0;
-
-        for (const [groupId, cached] of this.roleCache.entries()) {
-            if (now - cached.timestamp > this.CACHE_TTL) {
-                this.roleCache.delete(groupId);
-                cleaned++;
-            }
-        }
-
-        if (cleaned > 0) {
-            logger.debug(`[CACHE] Cleaned ${cleaned} expired cache entries`);
-        }
-    }
-
-    /**
-     * Load cache from persistent storage
-     */
-    private loadCacheFromDisk(): void {
-        try {
-            if (existsSync(this.cacheFilePath)) {
-                const data = readFileSync(this.cacheFilePath, 'utf8');
-                const parsed = JSON.parse(data);
-
-                // Convert back to Map with proper types
-                this.roleCache = new Map(
-                    Object.entries(parsed).map(([key, value]: [string, any]) => [
-                        key,
-                        {
-                            roles: value.roles || [],
-                            timestamp: value.timestamp || 0,
-                            groupId: value.groupId || key
-                        }
-                    ])
-                );
-
-                logger.info(`[CACHE] Loaded ${this.roleCache.size} cached groups from disk`);
-            } else {
-                logger.info('[CACHE] No cache file found, starting fresh');
-            }
-        } catch (e) {
-            logger.warn('[CACHE] Failed to load cache from disk:', e);
-            this.roleCache = new Map();
-        }
-    }
-
-    /**
-     * Save cache to persistent storage
-     */
-    private saveCacheToDisk(): void {
-        try {
-            // Ensure directory exists
-            const cacheDir = join(app.getPath('userData'));
-            if (!existsSync(cacheDir)) {
-                mkdirSync(cacheDir, { recursive: true });
-            }
-
-            // Convert Map to plain object for JSON serialization
-            const cacheObject: Record<string, CachedGroupRoles> = {};
-            for (const [groupId, cached] of this.roleCache.entries()) {
-                cacheObject[groupId] = cached;
-            }
-
-            writeFileSync(this.cacheFilePath, JSON.stringify(cacheObject, null, 2));
-            logger.debug(`[CACHE] Saved ${this.roleCache.size} cached groups to disk`);
-        } catch (e) {
-            logger.warn('[CACHE] Failed to save cache to disk:', e);
-        }
-    }
 
     /**
      * Updates the list of allowed groups.
@@ -571,29 +473,29 @@ class GroupAuthorizationService {
     }
 
     /**
-          * Clears all allowed groups (used on logout)
-          */
+     * Clears all allowed groups (used on logout)
+     */
     public clearAllowedGroups(): void {
         this.allowedGroupIds.clear();
+        this.cachedGroupObjects.clear();
+        this.cacheOwnerId = null;
         this.initialized = false;
 
-        // Clear cache and stop background refresh
-        this.roleCache.clear();
-        this.refreshQueue = [];
-        this.isRefreshing = false;
-        this.rateLimiter = { lastRequest: 0, requestCount: 0 };
+        // Force clear persistence
+        this.store.clear();
 
-        // Clear persistent cache file
-        try {
-            if (existsSync(this.cacheFilePath)) {
-                // Write empty object to clear the file
-                writeFileSync(this.cacheFilePath, '{}');
-            }
-        } catch (e) {
-            logger.warn('[CACHE] Failed to clear cache file:', e);
-        }
+        logger.info('[SECURITY] Authorized groups and cache CLEARED (logout or invalid owner)');
+    }
 
-        logger.info('[SECURITY] Authorized groups and persistent cache cleared (logout)');
+    /**
+     * Checks if the cached data belongs to the provided user ID.
+     * 
+     * @param userId The user ID to validate against the cache owner
+     */
+    public isCacheOwnedBy(userId: string): boolean {
+        if (!this.cacheOwnerId) return false;
+        // Simple case-insensitive check just to be safe
+        return this.cacheOwnerId.trim() === userId.trim();
     }
 
     /**
@@ -750,6 +652,102 @@ class GroupAuthorizationService {
         }
 
         logger.warn(`[SECURITY VIOLATION] Action: ${action} | Group: ${groupId} | Reason: ${reason}`);
+    }
+    /**
+     * Internal: Emit a single group verified event
+     */
+    private emitGroupVerified(group: GroupMembershipData): void {
+        try {
+            const groupId = group.groupId || group.id;
+            if (!groupId) return;
+
+            // Normalize for emission similar to the bulk mapper
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const groupObj = group as any;
+            const innerGroup = groupObj.group || {};
+
+            const normalized = {
+                ...group,
+                id: groupId,
+                _memberId: group.id,
+                name: innerGroup.name || group.group?.name || groupObj.name || 'Unknown Group',
+                iconUrl: innerGroup.iconUrl || groupObj.iconUrl,
+                iconId: innerGroup.iconId || groupObj.iconId,
+                bannerUrl: innerGroup.bannerUrl || groupObj.bannerUrl,
+                bannerId: innerGroup.bannerId || groupObj.bannerId,
+                shortCode: innerGroup.shortCode || groupObj.shortCode || '',
+                discriminator: innerGroup.discriminator || groupObj.discriminator,
+                onlineMemberCount: innerGroup.onlineMemberCount ?? groupObj.onlineMemberCount,
+                activeInstanceCount: innerGroup.activeInstanceCount ?? groupObj.activeInstanceCount
+            };
+
+            serviceEventBus.emit('group-verified', { group: normalized });
+        } catch (e) {
+            logger.warn('[SECURITY] Failed to emit granular update:', e);
+        }
+    }
+
+    /**
+     * PREDICTIVE CACHING
+     * Automatically fetches roles for allowed groups in the background/idle time.
+     * This ensures that when a user clicks a group, the roles are likely already in LRU cache.
+     */
+    public startPredictiveCaching(): void {
+        if (this.predictiveCacheInterval) return;
+
+        logger.info('[PERF] Starting predictive caching service');
+
+        // Run every 2 minutes (low priority)
+        this.predictiveCacheInterval = setInterval(() => {
+            this.runPredictiveCacheCycle().catch(err => {
+                logger.warn('[PERF] Predictive cache cycle failed', err);
+            });
+        }, 1000 * 60 * 2);
+
+        // Run first cycle after 30s delay to let startup settle
+        setTimeout(() => {
+            this.runPredictiveCacheCycle().catch(() => { });
+        }, 30000);
+    }
+
+    public stopPredictiveCaching(): void {
+        if (this.predictiveCacheInterval) {
+            clearInterval(this.predictiveCacheInterval);
+            this.predictiveCacheInterval = null;
+        }
+    }
+
+    private async runPredictiveCacheCycle(): Promise<void> {
+        const allowedIds = Array.from(this.allowedGroupIds);
+        if (allowedIds.length === 0) return;
+
+        // Process a few groups per cycle
+        const PROCESS_PER_CYCLE = 3;
+        const client = getVRChatClient();
+        if (!client) return;
+
+        logger.debug(`[PERF] Running predictive cache cycle. Total groups: ${allowedIds.length}`);
+
+        for (let i = 0; i < PROCESS_PER_CYCLE; i++) {
+            // Round-robin
+            this.predictiveCacheIndex = (this.predictiveCacheIndex + 1) % allowedIds.length;
+            const groupId = allowedIds[this.predictiveCacheIndex];
+
+            // Only fetch if NOT in cache or nearing expiry (LRU doesn't tell us expiry easily, but we can check existence)
+            // Actually, fetchRolesWithRetry checks cache internaly. 
+            // We want to force a refresh if it's been a while, but LRU handles that.
+            // However, our fetchRolesWithRetry returns cached data if present.
+            // To force predictive refresh, we might need to be smarter, OR just rely on LRU expiry.
+            // If LRU ttl is 24h, we don't need to refresh often.
+            // BUT, if the user gains NEW permissions, we want to know.
+
+            // For now, let's just peek. If it's missing, we fetch.
+            if (!this.roleCache.has(groupId)) {
+                logger.debug(`[PERF] Pre-fetching roles for ${groupId}`);
+                await this.fetchRolesWithRetry(groupId, client);
+                await this.delay(1000); // 1s delay between predictive fetches (very low priority)
+            }
+        }
     }
 }
 

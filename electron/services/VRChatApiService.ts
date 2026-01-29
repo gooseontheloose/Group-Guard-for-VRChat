@@ -13,7 +13,6 @@ import { LRUCache } from 'lru-cache';
 import { networkService } from './NetworkService';
 import { VRChat } from 'vrchat';
 
-
 const logger = log.scope('VRChatApiService');
 
 // ============================================
@@ -197,22 +196,22 @@ export interface ApiResult<T> {
 
 const userCache = new LRUCache<string, { data: VRCUser; timestamp: number }>({
     max: 1000,
-    ttl: 1000 * 60 * 30, // 30 minute TTL (Increased for stability)
+    ttl: 1000 * 60 * 5, // 5 minute TTL
 });
 
 const groupCache = new LRUCache<string, { data: VRCGroup; timestamp: number }>({
     max: 100,
-    ttl: 1000 * 60 * 60, // 1 hour TTL (Increased for stability)
+    ttl: 1000 * 60 * 2, // 2 minute TTL
 });
 
 const worldCache = new LRUCache<string, { data: VRCWorld; timestamp: number }>({
     max: 200,
-    ttl: 1000 * 60 * 30, // 30 minute TTL (Increased for stability)
+    ttl: 1000 * 60 * 10, // 10 minute TTL
 });
 
 const groupMembersCache = new LRUCache<string, { data: VRCGroupMember[]; timestamp: number }>({
     max: 50,
-    ttl: 1000 * 60 * 5, // 5 minute TTL (Increased for stability)
+    ttl: 1000 * 60 * 1, // 1 minute TTL (members change frequently)
 });
 
 // ============================================
@@ -663,50 +662,6 @@ export const vrchatApiService = {
     },
 
     /**
-     * Get all instances across all joined groups
-     */
-    async getUserGroupInstances(): Promise<ApiResult<VRCInstance[]>> {
-        return networkService.execute(async () => {
-            const client = getVRChatClient();
-            if (!client) throw new Error('Not authenticated');
-
-            const userId = authGetCurrentUserId();
-            if (!userId) throw new Error('No current user');
-
-            // Strategy: Use the specific "getUserGroupInstances" endpoint if available in SDK
-            // or fetch via common patterns. The vrchat SDK usually maps this.
-            // If it's missing from the typed methods, we might need a manual fetch.
-
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const clientAny = client as any;
-            if (typeof clientAny.getUserGroupInstances === 'function') {
-                const response = await clientAny.getUserGroupInstances({ path: { userId } });
-                return extractArray(response.data || response) as VRCInstance[];
-            }
-
-            // Fallback: Manual fetch if SDK doesn't have it directly
-            const cookie = await getAuthCookieStringAsync();
-            if (!cookie) throw new Error('Not authenticated');
-
-            const url = `https://api.vrchat.cloud/api/1/users/${userId}/groups/instances`;
-            const response = await fetch(url, {
-                method: 'GET',
-                headers: {
-                    'Cookie': cookie,
-                    'User-Agent': 'VRChat Group Guard/1.0'
-                }
-            });
-
-            if (!response.ok) {
-                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-            }
-
-            const data = await response.json();
-            return (Array.isArray(data) ? data : []) as VRCInstance[];
-        }, 'getUserGroupInstances');
-    },
-
-    /**
      * Get instance details
      */
     async getInstance(worldId: string, instanceId: string): Promise<ApiResult<VRCInstance>> {
@@ -825,12 +780,36 @@ export const vrchatApiService = {
             const client = getVRChatClient();
             if (!client) throw new Error('Not authenticated');
 
-            const response = await client.getFriends({
-                query: { offline, n: 100 }
-            });
-            const friends = extractArray(response.data || response) as VRCFriend[];
+            let allFriends: VRCFriend[] = [];
+            let offset = 0;
+            const n = 100;
 
-            return friends;
+            while (true) {
+                logger.debug(`Fetching friends (offline=${offline}, offset=${offset})`);
+                const response = await client.getFriends({
+                    query: { offline, n, offset }
+                });
+
+                // Use the lower-level data or handle various SDK response formats
+                const chunk = (Array.isArray(response.data) ? response.data :
+                    (response.data && Array.isArray((response.data as any).data) ? (response.data as any).data : [])) as VRCFriend[];
+
+                if (chunk.length === 0) break;
+
+                allFriends = allFriends.concat(chunk);
+
+                // If we got fewer than requested, we're done
+                if (chunk.length < n) break;
+
+                offset += n;
+                if (offset > 1500) {
+                    logger.warn(`Friend list fetch reached sanity limit of ${offset}. Truncating.`);
+                    break;
+                }
+            }
+
+            logger.info(`Fetched ${allFriends.length} total ${offline ? 'offline' : 'online'} friends.`);
+            return allFriends;
         }, `getFriends:${offline ? 'offline' : 'online'}`);
     },
 

@@ -7,35 +7,26 @@ import { databaseService } from './DatabaseService';
 import { groupAuthorizationService } from './GroupAuthorizationService';
 import { networkService } from './NetworkService';
 import { discordWebhookService } from './DiscordWebhookService';
+import { serviceEventBus } from './ServiceEventBus';
+import { windowService } from './WindowService';
 
 export function setupGroupHandlers() {
-    // SECURITY: Listen for progressive group found events and forward to UI
-    // imported directly inside to avoid early initialization issues or circularity
-    const { serviceEventBus } = require('./ServiceEventBus');
-    const { webContents } = require('electron');
 
-    serviceEventBus.on('group-found', ({ group }: any) => {
-        const allWindows = webContents.getAllWebContents();
-        allWindows.forEach((wc: any) => {
-            wc.send('groups:updated', { group });
-        });
+    // Listen for security updates and broadcast to renderer
+    serviceEventBus.on('groups-updated', ({ groups }) => {
+        logger.info(`Broadcasting ${groups.length} authorized groups to renderer`);
+        windowService.broadcast('groups:updated', { groups });
     });
 
-    // Also forward initial loads and bulk updates
-    serviceEventBus.on('groups-initial-loaded', ({ groups }: any) => {
-        const allWindows = webContents.getAllWebContents();
-        allWindows.forEach((wc: any) => {
-            wc.send('groups:list-updated', { groups });
-        });
+    serviceEventBus.on('groups-cache-ready', ({ groupIds }) => {
+        logger.info(`Broadcasting cache ready event for ${groupIds.length} groups`);
+        windowService.broadcast('groups:cache-ready', { groupIds });
     });
 
-    serviceEventBus.on('groups-updated', ({ groups }: any) => {
-        const allWindows = webContents.getAllWebContents();
-        allWindows.forEach((wc: any) => {
-            wc.send('groups:list-updated', { groups });
-        });
+    serviceEventBus.on('group-verified', ({ group }) => {
+        // Broadacst granular update to UI
+        windowService.broadcast('groups:verified', { group });
     });
-
 
     // Get user's groups (groups where user is a member)
     // Get user's groups (groups where user is a member)
@@ -47,15 +38,62 @@ export function setupGroupHandlers() {
             return { success: false, error: "Not authenticated. Please log in first." };
         }
 
-        return networkService.execute(async () => {
-            // Sanitize userId
-            const safeUserId = userId.trim();
-            if (!safeUserId.startsWith('usr_')) {
-                throw new Error(`Invalid User ID: ${safeUserId}`);
-            }
+        const safeUserId = userId.trim();
 
+        // STAGE 1: Check if we have cached authorized groups already
+        if (groupAuthorizationService.isInitialized()) {
+            // SECURITY CRITICAL: Verify the cache belongs to the CURRENT user
+            if (groupAuthorizationService.isCacheOwnedBy(safeUserId)) {
+                const cachedGroupIds = groupAuthorizationService.getAllowedGroupIds();
+                const cachedFullObjects = groupAuthorizationService.getCachedGroupObjects();
+
+                if (cachedGroupIds.length > 0) {
+                    logger.info(`[PERF] Returning ${cachedGroupIds.length} cached groups instantly (Stage 1)`);
+
+                    // Trigger Stage 2 refresh in background
+                    setTimeout(() => {
+                        vrchatApiService_refreshGroups(safeUserId).catch(err => {
+                            logger.error('Background refresh failed:', err);
+                        });
+                    }, 100);
+
+                    // Return full cached objects if available, otherwise return minimal placeholders
+                    if (cachedFullObjects.length > 0) {
+                        logger.info(`[PERF] Returning ${cachedFullObjects.length} full cached group objects with images`);
+                        return {
+                            success: true,
+                            groups: cachedFullObjects,
+                            isPartial: true // Still mark as partial so UI knows a refresh is coming
+                        };
+                    }
+
+                    // Fallback: minimal objects (no images, but UI won't be stuck)
+                    return {
+                        success: true,
+                        groups: cachedGroupIds.map(id => ({ id, name: 'Loading...', shortCode: '' })),
+                        isPartial: true
+                    };
+                }
+            } else {
+                logger.warn(`[SECURITY] Cache mismatch! Cache belongs to different user. clearing cache.`);
+                groupAuthorizationService.clearAllowedGroups();
+            }
+        }
+
+        // STAGE 2: Perform the actual network fetch
+        return vrchatApiService_refreshGroups(safeUserId);
+    });
+
+    /**
+     * Internal helper to refresh groups from VRChat API and authorize them.
+     */
+    async function vrchatApiService_refreshGroups(userId: string) {
+        const client = getVRChatClient();
+        if (!client) return { success: false, error: "Not authenticated" };
+
+        return networkService.execute(async () => {
             const response = await client.getUserGroups({
-                path: { userId: safeUserId }
+                path: { userId }
             });
 
             if (response.error) {
@@ -64,76 +102,43 @@ export function setupGroupHandlers() {
 
             const groups = response.data || [];
 
-            // Map the groups to normalize the structure
-            interface GroupMembershipData {
-                id: string;
-                groupId?: string;
-                ownerId?: string;
-                userId?: string;
-                roleIds?: string[];
-                myMember?: { permissions?: string[]; roleIds?: string[] };
-                group?: { ownerId?: string; name?: string };
-                [key: string]: unknown;
-            }
-
-            const mappedGroups = (groups as GroupMembershipData[]).map((g) => {
+            // Map and Normalize
+            const mappedGroups = (groups as any[]).map((g) => {
                 if (g.groupId && typeof g.groupId === 'string' && g.groupId.startsWith('grp_')) {
-                    return {
-                        ...g,
-                        id: g.groupId, // Normalize ID to be the group ID
-                    };
+                    return { ...g, id: g.groupId };
                 }
                 return g;
             });
 
-            // Call security service - this now returns instantly with cached groups
-            // and continues processing in background for remaining groups
             const authorizedGroups = await groupAuthorizationService.processAndAuthorizeGroups(
                 mappedGroups,
-                safeUserId
+                userId
             );
 
-            logger.info(`[FAST] Instantly returned ${(authorizedGroups as any[]).length} groups from cache (Total found: ${mappedGroups.length})`);
-            return { groups: authorizedGroups, totalFound: mappedGroups.length };
-        }, 'groups:get-my-groups').then(res => {
-            // Map ExecutionResult to IPC format if needed, or simply return specific shape
-            if (res.success) return { success: true, groups: res.data?.groups, totalFound: res.data?.totalFound };
+            return { groups: authorizedGroups };
+        }, 'groups:get-my-groups:refresh').then(res => {
+            if (res.success) {
+                // START PREDICTIVE CACHING SERVICE ONCE AUTH IS CONFIRMED
+                groupAuthorizationService.startPredictiveCaching();
+
+                return { success: true, groups: res.data?.groups };
+            }
             return { success: false, error: res.error };
         });
-    });
+    }
 
-    // GET ALL INSTANCES (For Home Page Dashboard)
-    ipcMain.handle('groups:get-all-instances', async () => {
-        return vrchatApiService.getUserGroupInstances().then(res => {
-            if (res.success && res.data) {
-                // Map results to a counts object: { [groupId: string]: number }
-                const counts: Record<string, number> = {};
-                res.data.forEach(instance => {
-                    const groupId = instance.ownerId; // In this endpoint, ownerId is the groupId
-                    if (groupId && groupId.startsWith('grp_')) {
-                        counts[groupId] = (counts[groupId] || 0) + 1;
-                    }
-                });
-                return { success: true, counts };
-            }
-            return { success: false, error: res.error || 'Failed to fetch all group instances' };
-        });
-    });
-
-    // GET INSTANCES for specific group details
-    // Get specific group details
+    // Get specific group details (Strict Moderation Only)
     ipcMain.handle('groups:get-details', async (_event, { groupId }: { groupId: string }) => {
         groupAuthorizationService.validateAccess(groupId, 'groups:get-details');
+        const result = await vrchatApiService.getGroupDetails(groupId);
+        return { ...result, group: result.data };
+    });
 
-        return networkService.execute(async () => {
-            const client = getVRChatClient();
-            if (!client) throw new Error("Not authenticated");
-            const response = await client.getGroup({ path: { groupId } });
-            return { group: response.data };
-        }, `groups:get-details:${groupId}`).then(res => {
-            if (res.success) return { success: true, group: res.data?.group };
-            return { success: false, error: res.error };
-        });
+    // Get public group details (Bypasses moderation check, for profile viewing)
+    ipcMain.handle('groups:get-public-details', async (_event, { groupId }: { groupId: string }) => {
+        // No moderation check here - VRChat API handles public/private visibility
+        const result = await vrchatApiService.getGroupDetails(groupId);
+        return { ...result, group: result.data };
     });
 
     // Get world details

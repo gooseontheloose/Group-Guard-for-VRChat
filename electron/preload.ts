@@ -20,23 +20,27 @@ contextBridge.exposeInMainWorld('electron', {
     // Groups API
     getMyGroups: () => ipcRenderer.invoke('groups:get-my-groups'),
     getGroupDetails: (groupId: string) => ipcRenderer.invoke('groups:get-details', { groupId }),
+    getGroupPublicDetails: (groupId: string) => ipcRenderer.invoke('groups:get-public-details', { groupId }),
     getGroupMembers: (groupId: string, offset = 0, n = 100) => ipcRenderer.invoke('groups:get-members', { groupId, offset, n }),
     searchGroupMembers: (groupId: string, query: string, n = 20) => ipcRenderer.invoke('groups:search-members', { groupId, query, n }),
     getGroupRequests: (groupId: string) => ipcRenderer.invoke('groups:get-requests', { groupId }),
     respondToGroupRequest: (groupId: string, userId: string, action: 'accept' | 'deny') => ipcRenderer.invoke('groups:respond-request', { groupId, userId, action }),
     getGroupBans: (groupId: string) => ipcRenderer.invoke('groups:get-bans', { groupId }),
     getGroupInstances: (groupId: string) => ipcRenderer.invoke('groups:get-instances', { groupId }),
-    getAllGroupInstances: () => ipcRenderer.invoke('groups:get-all-instances'),
-
-    onGroupsUpdated: (callback: (data: { group: any }) => void) => {
-        const handler = (_event: Electron.IpcRendererEvent, data: { group: any }) => callback(data);
+    onGroupsUpdated: (callback: (data: { groups: any[] }) => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, data: { groups: any[] }) => callback(data);
         ipcRenderer.on('groups:updated', handler);
         return () => ipcRenderer.removeListener('groups:updated', handler);
     },
-    onGroupsListUpdated: (callback: (data: { groups: any[] }) => void) => {
-        const handler = (_event: Electron.IpcRendererEvent, data: { groups: any[] }) => callback(data);
-        ipcRenderer.on('groups:list-updated', handler);
-        return () => ipcRenderer.removeListener('groups:list-updated', handler);
+    onGroupsCacheReady: (callback: (data: { groupIds: string[] }) => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, data: { groupIds: string[] }) => callback(data);
+        ipcRenderer.on('groups:cache-ready', handler);
+        return () => ipcRenderer.removeListener('groups:cache-ready', handler);
+    },
+    onGroupVerified: (callback: (data: { group: any }) => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, data: { group: any }) => callback(data);
+        ipcRenderer.on('groups:verified', handler);
+        return () => ipcRenderer.removeListener('groups:verified', handler);
     },
 
     banUser: (groupId: string, userId: string) => ipcRenderer.invoke('groups:ban-user', { groupId, userId }),
@@ -298,6 +302,15 @@ contextBridge.exposeInMainWorld('electron', {
         }
     },
 
+    // Staff API (shares data with AutoMod whitelist)
+    staff: {
+        getMembers: (groupId: string) => ipcRenderer.invoke('staff:get-members', groupId),
+        addMember: (groupId: string, userId: string) => ipcRenderer.invoke('staff:add-member', { groupId, userId }),
+        removeMember: (groupId: string, userId: string) => ipcRenderer.invoke('staff:remove-member', { groupId, userId }),
+        getSettings: (groupId: string) => ipcRenderer.invoke('staff:get-settings', groupId),
+        setSettings: (groupId: string, settings: unknown) => ipcRenderer.invoke('staff:set-settings', { groupId, settings }),
+    },
+
     // Report API
     report: {
         getTemplates: () => ipcRenderer.invoke('report:get-templates'),
@@ -332,6 +345,28 @@ contextBridge.exposeInMainWorld('electron', {
             ipcRenderer.on('bulk-friend:progress', handler);
             return () => ipcRenderer.removeListener('bulk-friend:progress', handler);
         }
+    },
+
+    // Friendship Manager API (Phase 2)
+    friendship: {
+        getStatus: () => ipcRenderer.invoke('friendship:get-status'),
+        getGameLog: (limit?: number) => ipcRenderer.invoke('friendship:get-game-log', limit),
+        getPlayerLog: (options?: { limit?: number; search?: string; type?: 'join' | 'leave' | 'all' }) =>
+            ipcRenderer.invoke('friendship:get-player-log', options),
+        getFriendLocations: () => ipcRenderer.invoke('friendship:get-friend-locations'),
+        getSocialFeed: (limit?: number) => ipcRenderer.invoke('friendship:get-social-feed', limit),
+        getRelationshipEvents: (limit?: number) => ipcRenderer.invoke('friendship:get-relationship-events', limit),
+        refreshFriends: () => ipcRenderer.invoke('friendship:refresh-friends'),
+        refreshRelationships: () => ipcRenderer.invoke('friendship:refresh-relationships'),
+        onUpdate: (callback: (data: unknown) => void) => {
+            const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data);
+            ipcRenderer.on('friendship:update', handler);
+            return () => ipcRenderer.removeListener('friendship:update', handler);
+        },
+        getPlayerStats: (userId: string) => ipcRenderer.invoke('friendship:get-player-stats', userId),
+        getWorldStats: (worldId: string) => ipcRenderer.invoke('friendship:get-world-stats', worldId),
+        getFriendsList: () => ipcRenderer.invoke('friendship:get-friends-list'),
+        getMutualsBatch: (userIds: string[]) => ipcRenderer.invoke('friendship:get-mutuals-batch', userIds),
     },
 
     // Generic IPC Renderer for event listening

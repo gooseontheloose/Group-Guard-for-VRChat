@@ -40,7 +40,7 @@ interface GroupState {
   myGroups: Group[];
   selectedGroup: Group | null;
   isLoading: boolean;
-  totalGroupsToLoad: number;
+  isPartialLoading: boolean;
   error: string | null;
   isRoamingMode: boolean;
 
@@ -69,13 +69,13 @@ interface GroupState {
   lastPipelineEvent: PipelineEvent | null;
 
   fetchMyGroups: () => Promise<void>;
-  fetchAllGroupsInstances: () => Promise<void>;
   selectGroup: (group: Group | null) => void;
 
   fetchGroupRequests: (groupId: string) => Promise<void>;
   fetchGroupBans: (groupId: string) => Promise<void>;
   fetchGroupMembers: (groupId: string, offset?: number) => Promise<void>;
   fetchGroupInstances: (groupId: string) => Promise<void>;
+  fetchAllGroupsInstances: () => Promise<void>;
   respondToRequest: (groupId: string, userId: string, action: 'accept' | 'deny') => Promise<{ success: boolean; error?: string }>;
 
   // Get timestamp helper
@@ -89,6 +89,11 @@ interface GroupState {
   exitRoamingMode: () => void;
 
   loadMoreMembers: (groupId: string) => Promise<void>;
+  setGroups: (groups: Group[]) => void;
+
+
+  handleGroupVerified: (group: Group) => void;
+
 }
 
 export const useGroupStore = create<GroupState>((set, get) => ({
@@ -96,7 +101,7 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   selectedGroup: null,
   isRoamingMode: false,
   isLoading: false,
-  totalGroupsToLoad: 0,
+  isPartialLoading: false,
   error: null,
 
   requests: [],
@@ -124,15 +129,15 @@ export const useGroupStore = create<GroupState>((set, get) => ({
   fetchMyGroups: async () => {
     set({ isLoading: true, error: null });
     try {
-      const result = await window.electron.getMyGroups();
+      const result = await window.electron.getMyGroups() as any;
       if (result.success && result.groups) {
+        // If it's a partial result (Stage 1), we mark as partial loading
+        // so the UI can show a refresh indicator
         set({
           myGroups: result.groups as Group[],
-          totalGroupsToLoad: result.totalFound || result.groups.length,
-          isLoading: false
+          isLoading: result.isPartial ? false : false, // We unlock UI immediately
+          isPartialLoading: !!result.isPartial
         });
-        // Fetch instance counts immediately after groups are loaded
-        get().fetchAllGroupsInstances();
       } else {
         set({ error: result.error || 'Failed to fetch groups', isLoading: false });
       }
@@ -141,20 +146,27 @@ export const useGroupStore = create<GroupState>((set, get) => ({
     }
   },
 
-  fetchAllGroupsInstances: async () => {
-    try {
-      const result = await window.electron.getAllGroupInstances();
-      if (result.success && result.counts) {
-        const { myGroups } = get();
-        const updatedGroups = myGroups.map(group => ({
-          ...group,
-          activeInstanceCount: result.counts![group.id] || 0
-        }));
-        set({ myGroups: updatedGroups });
+  handleGroupVerified: (group: Group) => {
+    // Merge the verified group into the list
+    set(state => {
+      const existingIndex = state.myGroups.findIndex(g => g.id === group.id);
+
+      let newGroups;
+      if (existingIndex !== -1) {
+        // Update existing
+        newGroups = [...state.myGroups];
+        newGroups[existingIndex] = { ...newGroups[existingIndex], ...group };
+      } else {
+        // Add new (append)
+        newGroups = [...state.myGroups, group];
       }
-    } catch (err: unknown) {
-      console.error('Failed to fetch all group instances:', err);
-    }
+
+      return { myGroups: newGroups };
+    });
+  },
+
+  setGroups: (groups: Group[]) => {
+    set({ myGroups: groups, isPartialLoading: false, isLoading: false });
   },
 
   selectGroup: (group) => {
@@ -243,11 +255,62 @@ export const useGroupStore = create<GroupState>((set, get) => ({
           instances: result.instances,
           lastFetchedAt: { ...get().lastFetchedAt, instances: Date.now() }
         });
+
+        // Also update the group's activeInstanceCount in myGroups
+        const myGroups = get().myGroups;
+        const groupIndex = myGroups.findIndex(g => g.id === groupId);
+        if (groupIndex !== -1) {
+          const updatedGroups = [...myGroups];
+          updatedGroups[groupIndex] = {
+            ...updatedGroups[groupIndex],
+            activeInstanceCount: result.instances.length
+          };
+          set({ myGroups: updatedGroups });
+        }
       }
     } catch (error) {
       console.error('Failed to fetch instances', error);
     } finally {
       set({ isInstancesLoading: false });
+    }
+  },
+
+  fetchAllGroupsInstances: async () => {
+    const myGroups = get().myGroups;
+    // Limit concurrency to avoid slamming the API if user has many groups
+    // But since this is local IPC mostly (unless cached), 
+    // actually getGroupInstances does a network call.
+    // So we should be careful. 
+    // However, for now, simple Promise.all is probably okay if N is small (<50).
+
+    // Iterate through groups and update instance counts
+    for (const group of myGroups) {
+      // We use the SINGLE fetch method which handles updating state
+      // But wait, the SINGLE fetch method updates `instances` which is the SELECTED group instances.
+      // We don't want to overwrite `instances` (selected group view) with random group instances.
+      // We probably ONLY want to update the counts on the group objects.
+
+      // Let's create a specialized internal fetching logic or modify the loop.
+
+      try {
+        const result = await window.electron.getGroupInstances(group.id);
+        if (result.success && result.instances) {
+          // Capture instances to avoid closure issues or race conditions if needed, 
+          // though here simple variable is fine.
+          const instanceCount = result.instances.length;
+
+          set(state => {
+            const newGroups = state.myGroups.map(g =>
+              g.id === group.id
+                ? { ...g, activeInstanceCount: instanceCount }
+                : g
+            );
+            return { myGroups: newGroups };
+          });
+        }
+      } catch (e) {
+        console.error(`Failed to fetch instances for ${group.id}`, e);
+      }
     }
   },
 
@@ -393,34 +456,13 @@ export const useGroupStore = create<GroupState>((set, get) => ({
 // PIPELINE SUBSCRIPTION HELPER
 // ========================================
 
-// Initialize pipeline event subscription for the group store.
+/**
+ * Initialize pipeline event subscription for the group store.
+ * Call this from a React effect or at app startup.
+ * Returns cleanup function.
+ */
 export function initGroupStorePipelineSubscription(): () => void {
   const store = useGroupStore.getState();
-
-  // Progressive loading from background authorization
-  const unsubFound = window.electron.onGroupsUpdated(({ group }) => {
-    const { myGroups } = useGroupStore.getState();
-    // Only add if not already present
-    if (!myGroups.some(g => g.id === group.id)) {
-      useGroupStore.setState({
-        myGroups: [...myGroups, group],
-        // If we were showing an error, clear it since we found a group!
-        error: null
-      });
-      // Instances are fetched periodically, but let's trigger a check for the new group
-      store.fetchAllGroupsInstances();
-    }
-  });
-
-  const unsubList = window.electron.onGroupsListUpdated(({ groups }) => {
-    // Bulk update from initial load or background completion
-    useGroupStore.setState({
-      myGroups: groups as Group[],
-      isLoading: false,
-      error: null
-    });
-    store.fetchAllGroupsInstances();
-  });
 
   // Subscribe to group-related events
   const unsubMember = subscribeToPipelineEvent('group-member-updated', store.handlePipelineEvent);
@@ -428,13 +470,27 @@ export function initGroupStorePipelineSubscription(): () => void {
   const unsubJoined = subscribeToPipelineEvent('group-joined', store.handlePipelineEvent);
   const unsubLeft = subscribeToPipelineEvent('group-left', store.handlePipelineEvent);
 
+  // Subscribe to streaming group updates (Stage 2 refresh)
+  const unsubGroupsUpdated = window.electron.onGroupsUpdated((data) => {
+    console.log(`[STORE] Streaming groups update: ${data.groups.length} groups`);
+    useGroupStore.getState().setGroups(data.groups as Group[]);
+  });
+
+
+
+  // Subscribe to granular verified events (Stage 2 granular updates)
+  const unsubGroupVerified = window.electron.onGroupVerified((data) => {
+    // data.group is the single verified group
+    useGroupStore.getState().handleGroupVerified(data.group);
+  });
+
   return () => {
-    unsubFound();
-    unsubList();
     unsubMember();
     unsubRole();
     unsubJoined();
     unsubLeft();
+    unsubGroupsUpdated();
+    unsubGroupVerified();
   };
 }
 
