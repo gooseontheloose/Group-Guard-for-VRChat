@@ -693,6 +693,7 @@ export interface ElectronAPI {
       error?: string;
     }>;
     getFriendsList: () => Promise<FriendListItem[]>;
+    getMutualsBatch: (userIds: string[]) => Promise<Record<string, { friends: number; groups: number }>>;
   };
 }
 
@@ -702,6 +703,13 @@ export interface FriendListItem extends FriendLocation {
   lastSeen: string;
   dateKnown: string;
   friendScore: number;
+  // New fields for enhanced display
+  mutualFriends?: number;
+  mutualGroups?: number;
+  pronouns?: string;
+  isVRCPlus?: boolean;
+  isAgeVerified?: boolean;
+  platform?: string;
 }
 
 declare global {

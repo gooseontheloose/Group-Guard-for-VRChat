@@ -93,8 +93,7 @@ export const AgeVerifiedBadge: React.FC<{ isVerified?: boolean }> = ({ isVerifie
         <span
             title="18+ Verified"
             style={{
-                background: 'rgba(239, 68, 68, 0.2)', // Red-ish tint for 18+ usually, or we can use Gold?
-                // VRChat usually uses a specific icon. Let's use a simple text badge.
+                background: 'rgba(239, 68, 68, 0.2)',
                 color: '#ef4444',
                 border: '1px solid #ef4444',
                 fontSize: '0.6rem',
@@ -109,6 +108,31 @@ export const AgeVerifiedBadge: React.FC<{ isVerified?: boolean }> = ({ isVerifie
             }}
         >
             18+
+        </span>
+    );
+};
+
+export const VRCPlusBadge: React.FC<{ isVRCPlus?: boolean }> = ({ isVRCPlus }) => {
+    if (!isVRCPlus) return null;
+
+    return (
+        <span
+            title="VRC+ Subscriber"
+            style={{
+                background: 'rgba(255, 215, 0, 0.15)',
+                color: '#ffd700',
+                border: '1px solid #ffd700',
+                fontSize: '0.55rem',
+                fontWeight: 800,
+                borderRadius: '3px',
+                padding: '0 0.25rem',
+                display: 'inline-flex',
+                alignItems: 'center',
+                height: '16px',
+                cursor: 'help'
+            }}
+        >
+            VRC+
         </span>
     );
 };

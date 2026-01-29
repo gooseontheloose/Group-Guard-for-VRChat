@@ -230,5 +230,36 @@ export function setupFriendshipHandlers() {
         }
     });
 
+    // Batch fetch mutual counts for visible friends (to avoid rate limits)
+    ipcMain.handle('friendship:get-mutuals-batch', async (_event, userIds: string[]) => {
+        logger.debug(`[IPC] friendship:get-mutuals-batch called for ${userIds.length} users`);
+        try {
+            const { userProfileService } = await import('./UserProfileService');
+            const results = new Map<string, { friends: number; groups: number }>();
+
+            // Fetch in sequence with small delay to be nice to API
+            for (const userId of userIds) {
+                try {
+                    const counts = await userProfileService.getMutualCounts(userId);
+                    if (counts) {
+                        results.set(userId, { friends: counts.friends, groups: counts.groups });
+                    }
+                } catch (err) {
+                    logger.warn(`Failed to get mutuals for ${userId}:`, err);
+                }
+                // Small delay between requests
+                await new Promise(r => setTimeout(r, 100));
+            }
+
+            // Convert Map to object for IPC
+            const output: Record<string, { friends: number; groups: number }> = {};
+            results.forEach((v, k) => { output[k] = v; });
+            return output;
+        } catch (e) {
+            logger.error('Failed to get mutuals batch:', e);
+            return {};
+        }
+    });
+
     logger.info('Friendship Manager IPC handlers registered successfully.');
 }
