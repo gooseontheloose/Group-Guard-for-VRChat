@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('electron', {
     respondToGroupRequest: (groupId: string, userId: string, action: 'accept' | 'deny') => ipcRenderer.invoke('groups:respond-request', { groupId, userId, action }),
     getGroupBans: (groupId: string) => ipcRenderer.invoke('groups:get-bans', { groupId }),
     getGroupInstances: (groupId: string) => ipcRenderer.invoke('groups:get-instances', { groupId }),
+    getAllActiveInstances: () => ipcRenderer.invoke('groups:get-all-active-instances'),
     onGroupsUpdated: (callback: (data: { groups: any[] }) => void) => {
         const handler = (_event: Electron.IpcRendererEvent, data: { groups: any[] }) => callback(data);
         ipcRenderer.on('groups:updated', handler);
@@ -189,7 +190,8 @@ contextBridge.exposeInMainWorld('electron', {
             const handler = (_event: Electron.IpcRendererEvent, data: { sent: number; skipped: number; failed: number; total: number; current?: string; done?: boolean }) => callback(data);
             ipcRenderer.on('mass-invite:progress', handler);
             return () => ipcRenderer.removeListener('mass-invite:progress', handler);
-        }
+        },
+        getHealthStats: () => ipcRenderer.invoke('instance:get-health-stats'),
     },
 
     // Updater API

@@ -47,10 +47,10 @@ export const LivePlayerChart: React.FC<LivePlayerChartProps> = ({ className, sty
             return `${x},${y}`;
         }).join(' ');
 
-        // For Area fill
+        // For Area fill (bottom edge at visual container bottom)
         const firstPoint = points.split(' ')[0];
         const lastPoint = points.split(' ')[points.split(' ').length - 1];
-        const fillPath = `${firstPoint.split(',')[0]},${height - padding} ${points} ${lastPoint.split(',')[0]},${height - padding}`;
+        const fillPath = `${firstPoint.split(',')[0]},${height} ${points} ${lastPoint.split(',')[0]},${height}`;
 
         return {
             pathD: `M ${points}`,

@@ -60,6 +60,7 @@ interface GroupMembershipData {
     roleIds?: string[];
     myMember?: { permissions?: string[]; roleIds?: string[] };
     group?: { ownerId?: string; name?: string };
+    lastVerifiedAt?: number; // timestamp of last successful mod check
     [key: string]: unknown;
 }
 
@@ -177,6 +178,11 @@ class GroupAuthorizationService {
         for (const g of groups) {
             const id = g?.id || g?.groupId;
             if (id && id.startsWith('grp_')) {
+                // Ensure we don't lose the lastVerifiedAt if the new object doesn't have it (shouldn't happen with our logic, but safe)
+                const existing = this.cachedGroupObjects.get(id);
+                if (existing?.lastVerifiedAt && !g.lastVerifiedAt) {
+                    g.lastVerifiedAt = existing.lastVerifiedAt;
+                }
                 this.cachedGroupObjects.set(id, g);
             }
         }
@@ -212,15 +218,24 @@ class GroupAuthorizationService {
         const ownerGroups: GroupMembershipData[] = [];
         const needsPermCheck: GroupMembershipData[] = [];
 
+        // Hydrate lastVerifiedAt from cache into the fresh API data
+        // This ensures we can use the cache even if VRChat returned a fresh (but blank) object
         for (const g of groups) {
             const groupId = g.groupId || g.id;
             if (!groupId || !groupId.startsWith('grp_')) {
                 continue;
             }
 
+            // Restore verification timestamp from memory/disk cache if present
+            const cachedParams = this.cachedGroupObjects.get(groupId);
+            if (cachedParams && cachedParams.lastVerifiedAt) {
+                g.lastVerifiedAt = cachedParams.lastVerifiedAt;
+            }
+
             // Check if user is owner - no API call needed
             const isOwner = g.ownerId === userId || g.group?.ownerId === userId;
             if (isOwner) {
+                g.lastVerifiedAt = Date.now(); // Owner is always verified
                 ownerGroups.push(g);
             } else {
                 needsPermCheck.push(g);
@@ -242,13 +257,11 @@ class GroupAuthorizationService {
         const processGroup = async (g: GroupMembershipData) => {
             const groupId = g.groupId || g.id;
             try {
-                // Consume a token for the API call (checkModPermissions -> fetchRoles)
-                // Note: checkModPermissions might hit cache and not use API, but we act conservatively
-                await this.tokenBucket.consume(1);
-
                 if (this.currentProcessId !== processId) return; // Cancel check
 
+                // Check Mod Perms (HANDLE OPTIMISTIC AUTH INTERNALLY)
                 const hasMod = await this.checkModPermissions(groupId!, userId, g);
+
                 if (hasMod) {
                     moderatableGroups.push(g);
                     this.emitGroupVerified(g);
@@ -299,7 +312,8 @@ class GroupAuthorizationService {
                     shortCode: innerGroup.shortCode || groupObj.shortCode || '',
                     discriminator: innerGroup.discriminator || groupObj.discriminator,
                     onlineMemberCount: innerGroup.onlineMemberCount ?? groupObj.onlineMemberCount,
-                    activeInstanceCount: innerGroup.activeInstanceCount ?? groupObj.activeInstanceCount
+                    activeInstanceCount: innerGroup.activeInstanceCount ?? groupObj.activeInstanceCount,
+                    lastVerifiedAt: g.lastVerifiedAt // Ensure timestamp persists
                 };
             }
             return g;
@@ -325,8 +339,20 @@ class GroupAuthorizationService {
 
     /**
      * Check if a user has moderation permissions in a group by checking their roles.
+     * IMPLEMNETS OPTIMISTIC AUTH: Trusts checks < 24h old.
      */
     private async checkModPermissions(groupId: string, userId: string, membership: GroupMembershipData): Promise<boolean> {
+        // --- OPTIMISTIC AUTH CHECK ---
+        const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+        if (membership.lastVerifiedAt && (Date.now() - membership.lastVerifiedAt < ONE_DAY_MS)) {
+            // logger.debug(`[SECURITY] Optimistic Auth for ${groupId}: Access Granted (Verified ${(Date.now() - membership.lastVerifiedAt) / 1000 / 60}m ago)`);
+            return true;
+        }
+        // -----------------------------
+
+        // If we need to fetch, consume a token (Rate Limit)
+        await this.tokenBucket.consume(1);
+
         const client = getVRChatClient();
         if (!client) return false;
 
@@ -372,6 +398,8 @@ class GroupAuthorizationService {
                     MODERATION_PERMISSIONS.includes(p)
                 );
                 if (hasModPerm) {
+                    // Update verification timestamp on success
+                    membership.lastVerifiedAt = Date.now();
                     return true;
                 }
             }

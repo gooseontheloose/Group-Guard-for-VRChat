@@ -22,9 +22,11 @@ export const InstanceHealthWidget: React.FC<InstanceHealthWidgetProps> = ({ styl
     useEffect(() => {
         const fetchStats = async () => {
             try {
-                const res = await window.electron.instance.getHealthStats();
-                if (res.success && res.stats) {
-                    setStats(res.stats);
+                if (window.electron.instance.getHealthStats) {
+                    const res = await window.electron.instance.getHealthStats();
+                    if (res.success && res.stats) {
+                        setStats(res.stats);
+                    }
                 }
             } catch (e) {
                 console.error("Failed to health stats", e);

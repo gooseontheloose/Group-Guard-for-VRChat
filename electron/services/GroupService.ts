@@ -127,6 +127,36 @@ export function setupGroupHandlers() {
         });
     }
 
+    // Get ALL active instances (Unified Fetch)
+    ipcMain.handle('groups:get-all-active-instances', async () => {
+        const client = getVRChatClient();
+        if (!client) return { success: false, error: "Not authenticated" };
+        const userId = getCurrentUserId();
+        if (!userId) return { success: false, error: "Not authenticated" };
+
+        return networkService.execute(async () => {
+            // Strategy: Use getUserGroupInstances to get everything at once
+            const response = await client.getUserGroupInstances({
+                path: { userId }
+            });
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const allInstances = (response.data || response) as any[];
+
+            if (!Array.isArray(allInstances)) {
+                logger.warn('[GroupService] getAllActiveInstances returned non-array:', allInstances);
+                return { instances: [] };
+            }
+
+            logger.info(`[GroupService] Fetched ${allInstances.length} active instances across all groups (Unified)`);
+            return { instances: allInstances };
+
+        }, 'groups:get-all-active-instances').then(res => {
+            if (res.success) return { success: true, instances: res.data?.instances };
+            return { success: false, error: res.error };
+        });
+    });
+
     // Get specific group details (Strict Moderation Only)
     ipcMain.handle('groups:get-details', async (_event, { groupId }: { groupId: string }) => {
         groupAuthorizationService.validateAccess(groupId, 'groups:get-details');
