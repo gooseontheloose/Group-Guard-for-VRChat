@@ -36,6 +36,7 @@ class FriendshipService {
 
             // Route to LocationService
             // Handle both object (online/location) and string (offline) payloads
+            // VRChat WebSocket events may have data at content root OR nested in content.user
             let userId: string | undefined;
             let content: any = {};
 
@@ -43,7 +44,12 @@ class FriendshipService {
                 userId = payload.content;
             } else if (payload.content && typeof payload.content === 'object') {
                 content = payload.content;
-                userId = (content.userId as string) || (content.id as string);
+                // VRChat WebSocket often nests user data inside content.user
+                const user = content.user || {};
+                userId = (content.userId as string) || (content.id as string) || (user.id as string);
+
+                // Merge user object data with content data (user takes precedence for nested fields)
+                content = { ...content, ...user };
             }
 
             if (userId) {

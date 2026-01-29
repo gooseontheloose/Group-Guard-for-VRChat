@@ -234,15 +234,14 @@ export const GameLogView: React.FC = () => {
                             letterSpacing: '0.05em',
                             position: 'sticky',
                             top: 0,
-                            background: 'var(--color-surface-glass)',
-                            backdropFilter: 'blur(10px)',
+                            background: '#1a1a1a',
                             zIndex: 10
                         }}>
-                            <th style={{ textAlign: 'left', padding: '0.65rem 1rem', borderBottom: '1px solid var(--border-color)', width: '100px' }}>Date</th>
-                            <th style={{ textAlign: 'left', padding: '0.65rem 0.5rem', borderBottom: '1px solid var(--border-color)', width: '150px' }}>Type</th>
-                            <th style={{ textAlign: 'center', padding: '0.65rem 0.5rem', borderBottom: '1px solid var(--border-color)', width: '50px' }}>18+</th>
-                            <th style={{ textAlign: 'left', padding: '0.65rem 0.5rem', borderBottom: '1px solid var(--border-color)', width: '100px' }}>Rank</th>
-                            <th style={{ textAlign: 'left', padding: '0.65rem 0.5rem', borderBottom: '1px solid var(--border-color)', width: '180px' }}>User</th>
+                            <th style={{ textAlign: 'left', padding: '0.65rem 1rem', borderBottom: '1px solid var(--border-color)', minWidth: '110px' }}>Date</th>
+                            <th style={{ textAlign: 'left', padding: '0.65rem 0.75rem', borderBottom: '1px solid var(--border-color)', minWidth: '120px' }}>Type</th>
+                            <th style={{ textAlign: 'left', padding: '0.65rem 0.75rem', borderBottom: '1px solid var(--border-color)', minWidth: '180px' }}>User</th>
+                            <th style={{ textAlign: 'center', padding: '0.65rem 0.5rem', borderBottom: '1px solid var(--border-color)', minWidth: '50px' }}>18+</th>
+                            <th style={{ textAlign: 'left', padding: '0.65rem 0.75rem', borderBottom: '1px solid var(--border-color)', minWidth: '100px' }}>Rank</th>
                             <th style={{ textAlign: 'left', padding: '0.65rem 1rem', borderBottom: '1px solid var(--border-color)' }}>World</th>
                         </tr>
                     </thead>
@@ -318,24 +317,6 @@ export const GameLogView: React.FC = () => {
                                         </td>
                                         <td style={{
                                             padding: '0.65rem 0.5rem',
-                                            textAlign: 'center'
-                                        }}>
-                                            {entry.userId && (
-                                                <AgeVerifiedBadge isVerified={users.get(entry.userId)?.ageVerified} />
-                                            )}
-                                        </td>
-                                        <td style={{
-                                            padding: '0.65rem 0.5rem'
-                                        }}>
-                                            {entry.userId && (
-                                                <TrustRankBadge
-                                                    tags={users.get(entry.userId)?.tags}
-                                                    fallbackRank={users.get(entry.userId)?.tags ? undefined : 'Visitor'}
-                                                />
-                                            )}
-                                        </td>
-                                        <td style={{
-                                            padding: '0.65rem 0.5rem',
                                             fontWeight: 600,
                                             fontSize: '0.85rem',
                                             maxWidth: '180px'
@@ -356,6 +337,24 @@ export const GameLogView: React.FC = () => {
                                             >
                                                 {entry.displayName}
                                             </span>
+                                        </td>
+                                        <td style={{
+                                            padding: '0.65rem 0.5rem',
+                                            textAlign: 'center'
+                                        }}>
+                                            {entry.userId && (
+                                                <AgeVerifiedBadge isVerified={users.get(entry.userId)?.ageVerified} />
+                                            )}
+                                        </td>
+                                        <td style={{
+                                            padding: '0.65rem 0.5rem'
+                                        }}>
+                                            {entry.userId && (
+                                                <TrustRankBadge
+                                                    tags={users.get(entry.userId)?.tags}
+                                                    fallbackRank={users.get(entry.userId)?.tags ? undefined : 'Visitor'}
+                                                />
+                                            )}
                                         </td>
                                         <td style={{
                                             padding: '0.65rem 1rem',

@@ -9,6 +9,11 @@ import type { SocialFeedEntry } from '../../types/electron';
 
 type FilterType = 'all' | 'online' | 'offline' | 'location' | 'status' | 'avatar' | 'bio';
 
+interface WorldInfo {
+    name: string;
+    imageUrl?: string;
+}
+
 export const FeedView: React.FC = () => {
     const [feed, setFeed] = useState<SocialFeedEntry[]>([]);
     const [loading, setLoading] = useState(true);
@@ -24,6 +29,9 @@ export const FeedView: React.FC = () => {
     // Pagination
     const [page, setPage] = useState(0);
     const [pageSize, setPageSize] = useState(10);
+
+    // Caching
+    const [worldCache, setWorldCache] = useState<Map<string, WorldInfo>>(new Map());
     const { users, fetchUsers } = useUserBatchFetcher();
 
     const { profile, openUserProfile, openWorldProfile, openGroupProfile, closeProfile } = useProfileModal();
@@ -34,13 +42,39 @@ export const FeedView: React.FC = () => {
             console.log('[FeedView] Got', data.length, 'feed entries');
             setFeed(data);
             setPage(0);
+
+            // Collect unique world IDs from location entries to fetch names
+            const worldIds = new Set<string>();
+            data.forEach(entry => {
+                if (entry.type === 'location' && entry.details) {
+                    const match = entry.details.match(/wrld_[a-f0-9-]+/);
+                    if (match && !worldCache.has(match[0])) {
+                        worldIds.add(match[0]);
+                    }
+                }
+            });
+
+            // Fetch world names for unique world IDs
+            for (const worldId of worldIds) {
+                try {
+                    const result = await window.electron.getWorld(worldId);
+                    if (result.success && result.world) {
+                        setWorldCache(prev => new Map(prev).set(worldId, {
+                            name: result.world!.name || 'Unknown World',
+                            imageUrl: result.world!.imageUrl
+                        }));
+                    }
+                } catch (e) {
+                    console.warn('Failed to fetch world:', worldId, e);
+                }
+            }
         } catch (error) {
             console.error('Failed to fetch feed:', error);
         } finally {
             setLoading(false);
             setRefreshing(false);
         }
-    }, []);
+    }, [worldCache]);
 
     useEffect(() => {
         fetchFeed();
@@ -139,6 +173,19 @@ export const FeedView: React.FC = () => {
             if (entry.type === 'offline') return 'Went offline';
             return '';
         }
+
+        // For location type, try to resolve world name from cache
+        if (entry.type === 'location') {
+            const match = entry.details.match(/wrld_[a-f0-9-]+/);
+            if (match && worldCache.has(match[0])) {
+                return worldCache.get(match[0])!.name;
+            }
+            // If world name is just the wrld_ ID, show as "Loading..." or try to extract readable part
+            if (entry.details.startsWith('wrld_')) {
+                return entry.details.includes(':') ? entry.details.split(':')[0] : 'Loading...';
+            }
+        }
+
         return entry.details;
     };
 
@@ -223,15 +270,14 @@ export const FeedView: React.FC = () => {
                             letterSpacing: '0.05em',
                             position: 'sticky',
                             top: 0,
-                            background: 'var(--color-surface-glass)',
-                            backdropFilter: 'blur(10px)',
+                            background: '#1a1a1a',
                             zIndex: 10
                         }}>
-                            <th style={{ textAlign: 'left', padding: '0.65rem 1rem', borderBottom: '1px solid var(--border-color)', width: '100px' }}>Date</th>
-                            <th style={{ textAlign: 'left', padding: '0.65rem 0.5rem', borderBottom: '1px solid var(--border-color)', width: '80px' }}>Type</th>
-                            <th style={{ textAlign: 'center', padding: '0.65rem 0.5rem', borderBottom: '1px solid var(--border-color)', width: '50px' }}>18+</th>
-                            <th style={{ textAlign: 'left', padding: '0.65rem 0.5rem', borderBottom: '1px solid var(--border-color)', width: '100px' }}>Rank</th>
-                            <th style={{ textAlign: 'left', padding: '0.65rem 0.5rem', borderBottom: '1px solid var(--border-color)', width: '180px' }}>User</th>
+                            <th style={{ textAlign: 'left', padding: '0.65rem 1rem', borderBottom: '1px solid var(--border-color)', minWidth: '110px' }}>Date</th>
+                            <th style={{ textAlign: 'left', padding: '0.65rem 0.75rem', borderBottom: '1px solid var(--border-color)', minWidth: '90px' }}>Type</th>
+                            <th style={{ textAlign: 'left', padding: '0.65rem 0.75rem', borderBottom: '1px solid var(--border-color)', minWidth: '180px' }}>User</th>
+                            <th style={{ textAlign: 'center', padding: '0.65rem 0.5rem', borderBottom: '1px solid var(--border-color)', minWidth: '50px' }}>18+</th>
+                            <th style={{ textAlign: 'left', padding: '0.65rem 0.75rem', borderBottom: '1px solid var(--border-color)', minWidth: '100px' }}>Rank</th>
                             <th style={{ textAlign: 'left', padding: '0.65rem 1rem', borderBottom: '1px solid var(--border-color)' }}>Detail</th>
                         </tr>
                     </thead>
@@ -308,24 +354,6 @@ export const FeedView: React.FC = () => {
                                         </td>
                                         <td style={{
                                             padding: '0.65rem 0.5rem',
-                                            textAlign: 'center'
-                                        }}>
-                                            {entry.userId && (
-                                                <AgeVerifiedBadge isVerified={users.get(entry.userId)?.ageVerified} />
-                                            )}
-                                        </td>
-                                        <td style={{
-                                            padding: '0.65rem 0.5rem'
-                                        }}>
-                                            {entry.userId && (
-                                                <TrustRankBadge
-                                                    tags={users.get(entry.userId)?.tags}
-                                                    fallbackRank={users.get(entry.userId)?.tags ? undefined : 'Visitor'}
-                                                />
-                                            )}
-                                        </td>
-                                        <td style={{
-                                            padding: '0.65rem 0.5rem',
                                             fontWeight: 600,
                                             fontSize: '0.85rem',
                                             maxWidth: '180px'
@@ -346,6 +374,24 @@ export const FeedView: React.FC = () => {
                                             >
                                                 {entry.displayName}
                                             </span>
+                                        </td>
+                                        <td style={{
+                                            padding: '0.65rem 0.5rem',
+                                            textAlign: 'center'
+                                        }}>
+                                            {entry.userId && (
+                                                <AgeVerifiedBadge isVerified={users.get(entry.userId)?.ageVerified} />
+                                            )}
+                                        </td>
+                                        <td style={{
+                                            padding: '0.65rem 0.5rem'
+                                        }}>
+                                            {entry.userId && (
+                                                <TrustRankBadge
+                                                    tags={users.get(entry.userId)?.tags}
+                                                    fallbackRank={users.get(entry.userId)?.tags ? undefined : 'Visitor'}
+                                                />
+                                            )}
                                         </td>
                                         <td style={{
                                             padding: '0.65rem 1rem',
