@@ -175,12 +175,12 @@ export function queueUserEnrichment(userId: string, groupId?: string): void {
     if (!fetchQueue.includes(userId)) {
         fetchQueue.push(userId);
     }
-    
+
     // Store context for processor
     if (groupId) {
         currentEnrichmentContext.groupId = groupId;
     }
-    
+
     // Trigger background processor
     processFetchQueue(groupId);
 }
@@ -204,7 +204,7 @@ export async function processFetchQueue(groupId?: string): Promise<void> {
             if (!userId) continue;
 
             const cacheKey = makeCacheKey(userId, groupId);
-            
+
             // Double check cache before hitting API
             const existing = entityCache.get(cacheKey);
             if (existing && existing.rank !== 'Unknown') {
@@ -218,7 +218,7 @@ export async function processFetchQueue(groupId?: string): Promise<void> {
                 // Dynamically import to avoid circular dependencies if they exist (safe pattern)
                 const { vrchatApiService } = await import('./VRChatApiService');
                 const userRes = await vrchatApiService.getUser(userId);
-                
+
                 if (!userRes.success || !userRes.data) {
                     throw new Error(userRes.error || 'Failed to fetch user');
                 }
@@ -240,7 +240,7 @@ export async function processFetchQueue(groupId?: string): Promise<void> {
                 // Update Cache
                 const displayName = userData?.displayName || 'Unknown';
                 const tags = userData?.tags || [];
-                
+
                 // Use centralized trust rank service
                 const rank = getTrustRank(tags);
 
@@ -290,7 +290,7 @@ export async function processFetchQueue(groupId?: string): Promise<void> {
             }
 
             // Respect rate limits!
-            await sleep(2000);
+            await sleep(500);
         }
     } catch (e) {
         logger.error('[EntityEnrichment] Queue processor fatal error', e);

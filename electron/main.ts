@@ -237,15 +237,21 @@ ipcMain.handle('storage:reconfigure', () => {
 // Initialize storage service
 storageService.initialize();
 
-discordBroadcastService.connect().catch(err => logger.error('Failed to connect Discord RPC:', err));
-
-
-databaseService.initialize().catch(err => {
-  logger.error('Failed to initialize database:', err);
-});
+import { settingsService, AppSettings } from './services/SettingsService';
+settingsService.initialize();
 
 import { watchlistService } from './services/WatchlistService';
 watchlistService.initialize();
+
+// Initialize Blocking/Critical Async Services concurrently
+Promise.all([
+  databaseService.initialize().catch(err => {
+    logger.error('Failed to initialize database:', err);
+  }),
+  discordBroadcastService.connect().catch(err => logger.error('Failed to connect Discord RPC:', err))
+]).then(() => {
+  logger.info('Critical services initialized.');
+});
 
 // Setup handlers
 import { serviceEventBus } from './services/ServiceEventBus';
@@ -262,14 +268,10 @@ setupUserHandlers();
 setupCredentialsHandlers();
 setupPipelineHandlers();
 setupLogWatcherHandlers();
-logWatcherService.start(); // Start robust watching immediately
 setupAutoModHandlers();
 setupStaffHandlers();
-startAutoModService(); // Start the periodic join request processing loop
-
 setupInstanceHandlers();
 setupOscHandlers();
-oscService.start();
 setupOscAnnouncementHandlers();
 setupDiscordWebhookHandlers();
 setupReportHandlers();
@@ -277,8 +279,10 @@ setupUserProfileHandlers();
 setupBulkFriendHandlers();
 setupFriendshipHandlers();
 
-import { settingsService, AppSettings } from './services/SettingsService';
-settingsService.initialize();
+// Start Background Workers
+logWatcherService.start(); // Start robust watching immediately
+startAutoModService(); // Start the periodic join request processing loop
+oscService.start();
 
 ipcMain.handle('settings:get', () => {
   return settingsService.getSettings();

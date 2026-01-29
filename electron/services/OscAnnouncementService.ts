@@ -172,6 +172,12 @@ class OscAnnouncementService {
             return;
         }
 
+        // Ignore backfilled players (those already in the instance when we joined)
+        if (event.isBackfill) {
+            logger.debug(`[handlePlayerJoined] Skipping greeting for backfilled player: ${event.displayName}`);
+            return;
+        }
+
         const config = this.getGroupConfig(this.activeGroupId);
         logger.debug(`[handlePlayerJoined] Config: greetingEnabled=${config?.greetingEnabled}, greetingMessage=${!!config?.greetingMessage}`);
 

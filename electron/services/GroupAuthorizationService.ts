@@ -34,6 +34,8 @@ import { getVRChatClient } from './AuthService';
 import Store from 'electron-store';
 import { LRUCache } from 'lru-cache';
 
+import { TokenBucket } from './NetworkService';
+
 const logger = log.scope('GroupAuthorization');
 
 // Moderation permission strings that indicate mod powers
@@ -78,6 +80,9 @@ class GroupAuthorizationService {
         max: 200,
         ttl: 1000 * 60 * 60 * 24 // 24 hour TTL for roles
     });
+
+    // Rate Limiter: 60 requests burst, 1 request/sec refill (60 request/min sustained)
+    private tokenBucket = new TokenBucket(60, 1);
 
     // Flag to track if permissions have been initialized
     private initialized: boolean = false;
@@ -226,69 +231,51 @@ class GroupAuthorizationService {
         moderatableGroups.push(...ownerGroups);
         logger.info(`[SECURITY] Found ${ownerGroups.length} owner groups (no API needed), ${needsPermCheck.length} need permission check`);
 
-        // RATE LIMIT MITIGATION: Strict Serial Priority Queue
-        // VRChat API is aggressive with rate limits on role fetching.
-        // We must process one by one with a delay to avoid 429s.
+        // RATE LIMIT MITIGATION: Token Bucket + Concurrency
+        // We substitute the old "Fast Lane" / "Slow Lane" with a dynamic token bucket.
+        // This allows bursts (fast startup) while enforcing long-term safety.
 
-        // 1. Process Priority Groups (User is Owner - Cached or simple check) which we already did above.
-        // 2. Process High Priority Groups (First 3 in the list - "Fast Lane")
-        const FAST_LANE_COUNT = 3;
-        const fastLane = needsPermCheck.slice(0, FAST_LANE_COUNT);
-        const slowLane = needsPermCheck.slice(FAST_LANE_COUNT);
+        const BATCH_SIZE = 5; // Concurrency limit
+        let processedCount = 0;
 
-        logger.info(`[SECURITY] Queue: ${fastLane.length} fast lane, ${slowLane.length} slow lane`);
+        // Helper to process a single group
+        const processGroup = async (g: GroupMembershipData) => {
+            const groupId = g.groupId || g.id;
+            try {
+                // Consume a token for the API call (checkModPermissions -> fetchRoles)
+                // Note: checkModPermissions might hit cache and not use API, but we act conservatively
+                await this.tokenBucket.consume(1);
 
-        // Fast Lane Loop (Short delay)
-        for (const g of fastLane) {
+                if (this.currentProcessId !== processId) return; // Cancel check
+
+                const hasMod = await this.checkModPermissions(groupId!, userId, g);
+                if (hasMod) {
+                    moderatableGroups.push(g);
+                    this.emitGroupVerified(g);
+                    logger.info(`[SECURITY] Checked ${groupId}: VERIFIED ✅`);
+                } else {
+                    // logger.debug(`[SECURITY] Checked ${groupId}: No Mod Perms ❌`);
+                }
+            } catch (e) {
+                logger.error(`[SECURITY] Error checking permissions for ${groupId}:`, e);
+            } finally {
+                processedCount++;
+                if (processedCount % 10 === 0) {
+                    logger.info(`[SECURITY] Processed ${processedCount}/${needsPermCheck.length} groups...`);
+                }
+            }
+        };
+
+        // Process in batches to control concurrency
+        for (let i = 0; i < needsPermCheck.length; i += BATCH_SIZE) {
             // Check for cancellation
             if (this.currentProcessId !== processId) {
                 logger.info(`[SECURITY] Process ${processId} cancelled by newer request`);
-                return moderatableGroups;
-            }
-
-            const groupId = g.groupId || g.id;
-            try {
-                const hasMod = await this.checkModPermissions(groupId!, userId, g);
-                if (hasMod) {
-                    moderatableGroups.push(g);
-                    this.emitGroupVerified(g);
-                }
-            } catch (e) {
-                logger.error(`[SECURITY] Error checking permissions for ${groupId}:`, e);
-            }
-            await this.delay(500); // 500ms for fast lane
-        }
-
-        // Slow Lane Loop (Tortoise Mode - 2s delay)
-        // This takes a long time (e.g. 150 groups * 2s = 5 mins)
-        // But granular updates keep the UI alive.
-        for (let i = 0; i < slowLane.length; i++) {
-            // Check for cancellation
-            if (this.currentProcessId !== processId) {
-                logger.info(`[SECURITY] Process ${processId} cancelled by newer request (during slow lane)`);
                 break;
             }
 
-            const g = slowLane[i];
-            const groupId = g.groupId || g.id;
-
-            try {
-                const hasMod = await this.checkModPermissions(groupId!, userId, g);
-                if (hasMod) {
-                    moderatableGroups.push(g);
-                    this.emitGroupVerified(g);
-                    logger.info(`[SECURITY] Checked ${groupId} (${i + 1}/${slowLane.length}): VERIFIED ✅`);
-                } else {
-                    logger.info(`[SECURITY] Checked ${groupId} (${i + 1}/${slowLane.length}): No Mod Perms ❌`);
-                }
-            } catch (e) {
-                logger.error(`[SECURITY] Error checking permissions for ${groupId}:`, e);
-            }
-
-            // 5.5s delay between requests to appease the rate limit gods
-            if (i < slowLane.length - 1) {
-                await this.delay(5500);
-            }
+            const batch = needsPermCheck.slice(i, i + BATCH_SIZE);
+            await Promise.all(batch.map(g => processGroup(g)));
         }
 
 
