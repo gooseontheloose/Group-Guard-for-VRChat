@@ -14,6 +14,7 @@ export { clearSessionStore };
 
 // Import the VRChat SDK
 import { VRChat, CurrentUser, Instance } from 'vrchat';
+import { VRChatUser } from '../../src/types/electron';
 
 // Store the VRChat SDK instance in memory (Main Process)
 interface VRChatClientInternal {
@@ -844,7 +845,7 @@ export async function checkOnlineStatus(): Promise<boolean> {
       
       // If user is present, check 'state' or 'status'
       // state: 'offline', 'active', 'online'
-      const u = user as unknown as Record<string, unknown>;
+      const u = user as unknown as VRChatUser;
       if (u && (u.state === 'offline' || u.status === 'offline')) {
           return false;
       }
