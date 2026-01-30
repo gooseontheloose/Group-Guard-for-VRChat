@@ -1,5 +1,5 @@
 import React from 'react';
-import { Users, UserPlus, Gavel, FileText } from 'lucide-react';
+import { Users, UserPlus, Gavel, Tag } from 'lucide-react';
 import { NeonButton } from '../../../components/ui/NeonButton';
 import { AppShieldIcon } from '../../../components/ui/AppShieldIcon';
 import type { LiveEntity } from '../../../stores/instanceMonitorStore';
@@ -11,7 +11,7 @@ interface EntityCardProps {
     onInvite: (id: string, name: string) => void;
     onKick: (id: string, name: string) => void;
     onBan: (id: string, name: string) => void;
-    onReport: (id: string, name: string) => void;
+    onAddFlag: (id: string, name: string) => void;
     readOnly?: boolean;
     // Selection Props
     isSelected?: boolean;
@@ -24,7 +24,7 @@ const EntityCardComponent: React.FC<EntityCardProps> = ({
     onInvite,
     onKick,
     onBan,
-    onReport,
+    onAddFlag,
     readOnly,
     isSelected,
     onToggleSelect,
@@ -164,15 +164,15 @@ const EntityCardComponent: React.FC<EntityCardProps> = ({
                     </div>
                 )}
 
-                {/* Report Button */}
+                {/* Add Flag Button */}
                 <NeonButton
                     size="sm"
                     variant="secondary"
                     style={{ padding: '4px 8px', fontSize: '0.75rem', opacity: 0.7 }}
-                    onClick={(e) => { e.stopPropagation(); onReport(entity.id, entity.displayName); }}
-                    title="Generate Report"
+                    onClick={(e) => { e.stopPropagation(); onAddFlag(entity.id, entity.displayName); }}
+                    title="Add Player Flag"
                 >
-                    <FileText size={14} />
+                    <Tag size={14} />
                 </NeonButton>
 
                 {!readOnly && !entity.isGroupMember && (
@@ -219,7 +219,7 @@ export const EntityCard = React.memo(EntityCardComponent, (prev, next) => {
     if (prev.onInvite !== next.onInvite) return false;
     if (prev.onKick !== next.onKick) return false;
     if (prev.onBan !== next.onBan) return false;
-    if (prev.onReport !== next.onReport) return false;
+    if (prev.onAddFlag !== next.onAddFlag) return false;
     if (prev.readOnly !== next.readOnly) return false;
 
     // Check selection props

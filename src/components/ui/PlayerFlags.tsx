@@ -12,13 +12,14 @@ interface PlayerFlag {
 
 interface PlayerFlagsProps {
     userId: string;
+    initialShowPicker?: boolean;
 }
 
-export const PlayerFlags: React.FC<PlayerFlagsProps> = ({ userId }) => {
+export const PlayerFlags: React.FC<PlayerFlagsProps> = ({ userId, initialShowPicker = false }) => {
     const [flags, setFlags] = useState<string[]>([]);
     const [definitions, setDefinitions] = useState<PlayerFlag[]>([]);
     const [loading, setLoading] = useState(true);
-    const [showPicker, setShowPicker] = useState(false);
+    const [showPicker, setShowPicker] = useState(initialShowPicker);
 
     useEffect(() => {
         const load = async () => {

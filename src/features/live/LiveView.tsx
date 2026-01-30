@@ -11,7 +11,7 @@ import { RecruitResultsDialog } from './dialogs/RecruitResultsDialog';
 import { MassInviteDialog } from '../dashboard/dialogs/MassInviteDialog';
 import { AutoModAlertOverlay } from './overlays/AutoModAlertOverlay';
 import { useAutoModAlertStore } from '../../stores/autoModAlertStore';
-import { ReportGeneratorDialog } from '../reports/ReportGeneratorDialog';
+import { AddFlagDialog } from './dialogs/AddFlagDialog';
 import { StatTile } from '../dashboard/components/StatTile';
 import { EntityCard } from './components/EntityCard';
 import { Skeleton } from '../../components/ui/Skeleton';
@@ -26,11 +26,6 @@ import styles from './LiveView.module.css';
 
 import { useRoamingLogStore, type LogEntry } from '../../stores/roamingLogStore';
 
-interface ReportContext {
-    target: { displayName: string; id: string };
-    world: { name?: string };
-    timestamp: string;
-}
 
 // Minimal interface to match what EntityCard expects, or we can map PlayerLogEntry to it.
 // EntityCard expects LiveEntity.
@@ -164,8 +159,8 @@ export const LiveView: React.FC = () => {
     const [recruitResults, setRecruitResults] = useState<{ blocked: { name: string, reason?: string }[], invited: number } | null>(null);
     const [showMassInvite, setShowMassInvite] = useState(false);
 
-    // Report Dialog State
-    const [reportContext, setReportContext] = useState<ReportContext | null>(null);
+    // Flag Dialog State
+    const [flagDialogUser, setFlagDialogUser] = useState<{ id: string; displayName: string } | null>(null);
 
     // Operation Start Dialog State
     const [operationDialog, setOperationDialog] = useState<{
@@ -200,13 +195,9 @@ export const LiveView: React.FC = () => {
         setBanUserDialog({ id: userId, displayName: name });
     }, []);
 
-    const handleReportClick = useCallback((userId: string, name: string) => {
-        setReportContext({
-            target: { displayName: name, id: userId },
-            world: { name: instanceInfo?.name },
-            timestamp: new Date().toISOString()
-        });
-    }, [instanceInfo?.name]);
+    const handleFlagClick = useCallback((userId: string, name: string) => {
+        setFlagDialogUser({ id: userId, displayName: name });
+    }, []);
 
     const performScan = useCallback(async () => {
         if (!selectedGroup && !isRoamingMode) return;
@@ -887,7 +878,7 @@ export const LiveView: React.FC = () => {
                                                         onInvite={handleRecruit}
                                                         onKick={handleKick}
                                                         onBan={handleBanClick}
-                                                        onReport={handleReportClick}
+                                                        onAddFlag={handleFlagClick}
                                                         readOnly={isRoamingMode && !roamingSelectedGroup}
                                                         isSelected={selectedEntityIds.has(entity.id)}
                                                         selectionMode={true}
@@ -922,7 +913,7 @@ export const LiveView: React.FC = () => {
                                                         onInvite={() => { }}
                                                         onKick={() => { }}
                                                         onBan={handleBanClick}
-                                                        onReport={handleReportClick}
+                                                        onAddFlag={handleFlagClick}
                                                         readOnly={true}
                                                     />
                                                 </motion.div>
@@ -1139,11 +1130,11 @@ export const LiveView: React.FC = () => {
             {/* AutoMod Alert Overlay */}
             < AutoModAlertOverlay />
 
-            {/* Report Generator Dialog */}
-            < ReportGeneratorDialog
-                isOpen={!!reportContext}
-                onClose={() => setReportContext(null)}
-                context={reportContext}
+            {/* Add Flag Dialog */}
+            <AddFlagDialog
+                isOpen={!!flagDialogUser}
+                onClose={() => setFlagDialogUser(null)}
+                user={flagDialogUser}
             />
 
             {/* Operation Start Dialog */}
