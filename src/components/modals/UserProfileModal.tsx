@@ -148,8 +148,8 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         const r = (trustLevel || '').toLowerCase();
         if (r.includes('trusted') || r.includes('veteran')) return '#8b2cdb'; // Purple
         if (r.includes('known')) return '#ff7b42';   // Orange
-        if (r.includes('user')) return '#2bcf5c';    // Green
         if (r.includes('new')) return '#1778ff';     // Blue
+        if (r.includes('user')) return '#2bcf5c';    // Green
         if (r.includes('visitor')) return '#cccccc'; // Gray
         if (r.includes('legend')) return '#ffd700';  // Gold
         return '#666666';
