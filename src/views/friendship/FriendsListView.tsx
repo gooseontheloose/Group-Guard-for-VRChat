@@ -5,6 +5,8 @@ import { ProfileModal, useProfileModal } from '../../components/ProfileModal';
 import { LogFilterBar } from '../../components/ui/LogFilterBar';
 import { useUserBatchFetcher } from '../../hooks/useUserBatchFetcher';
 import { TrustRankBadge, AgeVerifiedBadge, VRCPlusBadge } from '../../components/ui/UserBadges';
+import { ConfirmationModal } from '../../components/ui/ConfirmationModal';
+import { useNotificationStore } from '../../stores/notificationStore';
 import type { FriendListItem } from '../../types/electron';
 
 type FilterType = 'all' | 'online' | 'offline' | 'favorite';
@@ -30,6 +32,36 @@ export const FriendsListView: React.FC = () => {
 
     const { users, fetchUsers } = useUserBatchFetcher();
     const { profile, openUserProfile, openWorldProfile, openGroupProfile, closeProfile } = useProfileModal();
+    const addNotification = useNotificationStore(state => state.addNotification);
+    const [showRecalibrateConfirm, setShowRecalibrateConfirm] = useState(false);
+
+    const handleRecalibrate = async () => {
+        setLoading(true);
+        setShowRecalibrateConfirm(false);
+        try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const result = await (window.electron as any).logScanner.scan();
+
+            addNotification({
+                type: 'success',
+                title: 'Recalibration Complete',
+                message: `Corrected encounter counts and scanned ${result.processedFiles} log files. Added ${result.totalMinutesAdded} mins of history.`,
+                duration: 6000
+            });
+
+            handleRefresh();
+        } catch (e) {
+            addNotification({
+                type: 'error',
+                title: 'Recalibration Failed',
+                message: 'Check the developer console for details.',
+                duration: 5000
+            });
+            console.error(e);
+        } finally {
+            setLoading(false);
+        }
+    };
 
     // Mutuals data fetched on-demand per page
     const [mutuals, setMutuals] = useState<Record<string, { friends: number; groups: number }>>({});
@@ -210,24 +242,10 @@ export const FriendsListView: React.FC = () => {
                     <NeonButton
                         variant="secondary"
                         size="sm"
-                        onClick={async () => {
-                            if (confirm('Scan all old VRChat logs for missed time headers? This might take a moment.')) {
-                                setLoading(true);
-                                try {
-                                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                    const result = await (window.electron as any).logScanner.scan();
-                                    alert(`Scanned ${result.processedFiles} files. Added ${result.totalMinutesAdded} minutes of history!`);
-                                    handleRefresh();
-                                } catch (e) {
-                                    alert('Scan failed check console.');
-                                    console.error(e);
-                                } finally {
-                                    setLoading(false);
-                                }
-                            }
-                        }}
+                        onClick={() => setShowRecalibrateConfirm(true)}
+                        disabled={loading}
                     >
-                        📚 Recalibrate & Scan Logs
+                        📚 Manual Recalibration
                     </NeonButton>
                 </div>
             </LogFilterBar>
@@ -438,6 +456,17 @@ export const FriendsListView: React.FC = () => {
                 openUserProfile={openUserProfile}
                 openWorldProfile={openWorldProfile}
                 openGroupProfile={openGroupProfile}
+            />
+
+            {/* Recalibration Confirmation Modal */}
+            <ConfirmationModal
+                isOpen={showRecalibrateConfirm}
+                onClose={() => setShowRecalibrateConfirm(false)}
+                onConfirm={handleRecalibrate}
+                title="Recalibrate Encounter Stats"
+                message="This will scan your local Instance History (player_log.jsonl) and overwite any inflated encounter counts with the strict, accurate join counts from your history. This fixes 'bugged' encounter numbers. It will also scan text logs for any new history."
+                confirmLabel="Start Recalibration"
+                variant="warning"
             />
         </GlassPanel >
     );
