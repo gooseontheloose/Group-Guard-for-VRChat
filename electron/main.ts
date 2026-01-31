@@ -63,8 +63,10 @@ class StartupProgress {
   private currentStep = 0;
   private totalSteps = 28;
   private failedServices: string[] = [];
+  private startTime: number;
 
   constructor(private isSilent: boolean) {
+    this.startTime = Date.now();
     if (this.isSilent) {
       // Clear console and show splash
       process.stdout.write('\x1Bc');
@@ -99,11 +101,12 @@ class StartupProgress {
     process.stdout.write(output);
 
     if (this.currentStep >= this.totalSteps) {
+      const duration = ((Date.now() - this.startTime) / 1000).toFixed(1);
       process.stdout.write('\n\n');
       if (this.failedServices.length > 0) {
-        process.stdout.write(`\x1b[31m[!] Startup complete with issues in: ${this.failedServices.join(', ')}\x1b[0m\n\n`);
+        process.stdout.write(`\x1b[31m[!] Startup complete with issues in: ${this.failedServices.join(', ')} (${duration}s)\x1b[0m\n\n`);
       } else {
-        process.stdout.write(`\x1b[32mSystem initialization complete. Secure Bridge active.\x1b[0m\n\n`);
+        process.stdout.write(`\x1b[32mSystem initialization complete. Secure Bridge active. (${duration}s)\x1b[0m\n\n`);
       }
 
       // Restore normal level
