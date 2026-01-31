@@ -636,10 +636,9 @@ class LogWatcherService extends EventEmitter {
         // Inform UI to clear its local player list and update world
         this.emitToRenderer('log:location', { worldId, instanceId, location, timestamp });
 
-        if (!isBackfill) {
-          this.emit('location', { worldId, instanceId, location, timestamp });
-          serviceEventBus.emit('location', { worldId, instanceId, location, timestamp });
-        }
+        // UNGUARDED: Always emit location for backend state synchronization (PlayerLogService)
+        this.emit('location', { worldId, instanceId, location, timestamp });
+        serviceEventBus.emit('location', { worldId, instanceId, location, timestamp });
 
         // INSTANT RECONCILE: Immediately pull the fresh user list (Only when not hydrating)
         if (!this.isHydrating && !isBackfill) {
@@ -697,9 +696,8 @@ class LogWatcherService extends EventEmitter {
       const worldName = enterMatch[1].trim();
       this.state.currentWorldName = worldName;
       this.emitToRenderer('log:world-name', { name: worldName, timestamp });
-      if (!isBackfill) {
-        this.emit('world-name', { name: worldName, timestamp });
-      }
+      // UNGUARDED: Always emit world-name for backend state synchronization
+      this.emit('world-name', { name: worldName, timestamp });
       if (this.state.currentLocation && this.state.currentLocation.includes('~group(')) {
         discordBroadcastService.updateGroupStatus(worldName, this.state.players.size);
       }
