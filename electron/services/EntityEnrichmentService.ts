@@ -20,10 +20,11 @@ const logger = log.scope('EntityEnrichmentService');
 // Trust rank levels in order from lowest to highest
 export const TRUST_RANKS = [
     'Visitor',
-    'User',      // 'New User' / 'Basic' 
-    'Known',
-    'Trusted',
-    'Veteran',
+    'New User',  // Was 'User'
+    'User',      // Was 'Known'
+    'Known',     // Was 'Trusted'
+    'Trusted',   // Was 'Veteran'
+    'Veteran',   // Wait, VRChat is Visitor -> New User -> User -> Known User -> Trusted User.
     'Legend'
 ] as const;
 
@@ -32,11 +33,11 @@ export type TrustRank = typeof TRUST_RANKS[number] | 'Unknown';
 // Tag to rank mapping
 const TRUST_TAG_MAP: Record<string, TrustRank> = {
     'system_trust_visitor': 'Visitor',
-    'system_trust_basic': 'User',
-    'system_trust_known': 'Known',
-    'system_trust_trusted': 'Trusted',
-    'system_trust_veteran': 'Veteran',
-    'system_trust_legend': 'Legend'
+    'system_trust_basic': 'New User',  // Blue
+    'system_trust_known': 'User',      // Green
+    'system_trust_trusted': 'Known',   // Orange
+    'system_trust_veteran': 'Trusted', // Purple
+    'system_trust_legend': 'Legend'   // Gold/Legend
 };
 
 // Ordered tags from highest to lowest (for priority matching)
@@ -106,6 +107,12 @@ export function getTrustTagForRank(rank: TrustRank): string | null {
 // TYPES
 // ============================================
 
+import { friendshipService } from './FriendshipService';
+
+// ... (existing imports)
+
+// ...
+
 export interface LiveEntity {
     id: string; // userId (usr_...)
     displayName: string;
@@ -114,7 +121,22 @@ export interface LiveEntity {
     status: 'active' | 'kicked' | 'joining';
     avatarUrl?: string;
     lastUpdated: number;
+    // New Fields
+    friendStatus?: 'friend' | 'outgoing' | 'incoming' | 'none';
+    friendScore?: number;
+    metrics?: {
+        encounters: number;
+        timeSpent: number;
+    };
+    isAgeVerified?: boolean;
 }
+
+// ...
+
+// Inside processFetchQueue, around line 240
+// Update Cache logic
+
+
 
 // ============================================
 // CACHE (LRU to prevent memory leaks)
@@ -175,12 +197,12 @@ export function queueUserEnrichment(userId: string, groupId?: string): void {
     if (!fetchQueue.includes(userId)) {
         fetchQueue.push(userId);
     }
-    
+
     // Store context for processor
     if (groupId) {
         currentEnrichmentContext.groupId = groupId;
     }
-    
+
     // Trigger background processor
     processFetchQueue(groupId);
 }
@@ -204,7 +226,7 @@ export async function processFetchQueue(groupId?: string): Promise<void> {
             if (!userId) continue;
 
             const cacheKey = makeCacheKey(userId, groupId);
-            
+
             // Double check cache before hitting API
             const existing = entityCache.get(cacheKey);
             if (existing && existing.rank !== 'Unknown') {
@@ -218,7 +240,7 @@ export async function processFetchQueue(groupId?: string): Promise<void> {
                 // Dynamically import to avoid circular dependencies if they exist (safe pattern)
                 const { vrchatApiService } = await import('./VRChatApiService');
                 const userRes = await vrchatApiService.getUser(userId);
-                
+
                 if (!userRes.success || !userRes.data) {
                     throw new Error(userRes.error || 'Failed to fetch user');
                 }
@@ -240,9 +262,12 @@ export async function processFetchQueue(groupId?: string): Promise<void> {
                 // Update Cache
                 const displayName = userData?.displayName || 'Unknown';
                 const tags = userData?.tags || [];
-                
+
                 // Use centralized trust rank service
                 const rank = getTrustRank(tags);
+
+                // Fetch Friendship Data
+                const friendDetails = await friendshipService.getFriendshipDetails(userId);
 
                 const entity: LiveEntity = {
                     id: userId,
@@ -252,7 +277,10 @@ export async function processFetchQueue(groupId?: string): Promise<void> {
                     status: 'active',
                     // Prioritize persistent profile pictures (userIcon via VRC+) over current avatar thumbnail
                     avatarUrl: userData?.userIcon || userData?.profilePicOverride || userData?.currentAvatarThumbnailImageUrl || '',
-                    lastUpdated: Date.now()
+                    lastUpdated: Date.now(),
+                    friendStatus: friendDetails.isFriend ? 'friend' : 'none',
+                    friendScore: friendDetails.score,
+                    isAgeVerified: tags.includes('system_age_verified_group') || (userData as any).ageVerificationStatus === '18+'
                 };
 
                 entityCache.set(cacheKey, entity);
@@ -290,7 +318,7 @@ export async function processFetchQueue(groupId?: string): Promise<void> {
             }
 
             // Respect rate limits!
-            await sleep(2000);
+            await sleep(500);
         }
     } catch (e) {
         logger.error('[EntityEnrichment] Queue processor fatal error', e);

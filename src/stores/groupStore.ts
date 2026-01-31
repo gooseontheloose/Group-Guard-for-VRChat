@@ -96,361 +96,375 @@ interface GroupState {
 
 }
 
-export const useGroupStore = create<GroupState>((set, get) => ({
-  myGroups: [],
-  selectedGroup: null,
-  isRoamingMode: false,
-  isLoading: false,
-  isPartialLoading: false,
-  error: null,
+import { persist, createJSONStorage } from 'zustand/middleware';
 
-  requests: [],
-  bans: [],
-  members: [],
-  instances: [],
-
-  isRequestsLoading: false,
-  isBansLoading: false,
-  isMembersLoading: false,
-  isInstancesLoading: false,
-
-  lastFetchedAt: {
-    requests: 0,
-    bans: 0,
-    members: 0,
-    instances: 0,
-  },
-
-  hasRealtimeUpdate: false,
-  lastPipelineEvent: null,
-
-  getLastFetchedAt: (type) => get().lastFetchedAt[type],
-
-  fetchMyGroups: async () => {
-    set({ isLoading: true, error: null });
-    try {
-      const result = await window.electron.getMyGroups() as any;
-      if (result.success && result.groups) {
-        // If it's a partial result (Stage 1), we mark as partial loading
-        // so the UI can show a refresh indicator
-        set({
-          myGroups: result.groups as Group[],
-          isLoading: result.isPartial ? false : false, // We unlock UI immediately
-          isPartialLoading: !!result.isPartial
-        });
-      } else {
-        set({ error: result.error || 'Failed to fetch groups', isLoading: false });
-      }
-    } catch (err: unknown) {
-      set({ error: getErrorMessage(err) || 'Failed to fetch groups', isLoading: false });
-    }
-  },
-
-  handleGroupVerified: (group: Group) => {
-    // Merge the verified group into the list
-    set(state => {
-      const existingIndex = state.myGroups.findIndex(g => g.id === group.id);
-
-      let newGroups;
-      if (existingIndex !== -1) {
-        // Update existing
-        newGroups = [...state.myGroups];
-        newGroups[existingIndex] = { ...newGroups[existingIndex], ...group };
-      } else {
-        // Add new (append)
-        newGroups = [...state.myGroups, group];
-      }
-
-      return { myGroups: newGroups };
-    });
-  },
-
-  setGroups: (groups: Group[]) => {
-    set({ myGroups: groups, isPartialLoading: false, isLoading: false });
-  },
-
-  selectGroup: (group) => {
-    // Keep cached data when switching back to same group
-    const currentGroup = get().selectedGroup;
-    set({ isRoamingMode: false }); // Always exit roaming mode when selecting a group (or null)
-
-    if (currentGroup?.id === group?.id) {
-      return;
-    }
-
-    // Clear data only when switching to a different group
-    set({
-      selectedGroup: group,
-      requests: [],
-      bans: [],
-      members: [],
-      instances: [],
-      lastFetchedAt: { requests: 0, bans: 0, members: 0, instances: 0 },
-      hasRealtimeUpdate: false,
-      lastPipelineEvent: null
-    });
-  },
-
-  // ... (unchanged methods)
-
-
-
-  fetchGroupRequests: async (groupId: string) => {
-    set({ isRequestsLoading: true });
-    try {
-      const result = await window.electron.getGroupRequests(groupId);
-      if (result.success && result.requests) {
-        set({
-          requests: result.requests,
-          lastFetchedAt: { ...get().lastFetchedAt, requests: Date.now() }
-        });
-      }
-    } catch (error) {
-      console.error('Failed to fetch requests', error);
-    } finally {
-      set({ isRequestsLoading: false });
-    }
-  },
-
-  fetchGroupBans: async (groupId: string) => {
-    set({ isBansLoading: true });
-    try {
-      const result = await window.electron.getGroupBans(groupId);
-      if (result.success && result.bans) {
-        set({
-          bans: result.bans,
-          lastFetchedAt: { ...get().lastFetchedAt, bans: Date.now() }
-        });
-      }
-    } catch (error) {
-      console.error('Failed to fetch bans', error);
-    } finally {
-      set({ isBansLoading: false });
-    }
-  },
-
-  fetchGroupMembers: async (groupId: string, offset = 0) => {
-    set({ isMembersLoading: true });
-    try {
-      const result = await window.electron.getGroupMembers(groupId, offset, 100);
-      if (result.success && result.members) {
-        set((state) => ({
-          members: offset === 0 ? result.members! : [...state.members, ...result.members!],
-          lastFetchedAt: { ...state.lastFetchedAt, members: Date.now() }
-        }));
-      }
-    } catch (error) {
-      console.error('Failed to fetch members', error);
-    } finally {
-      set({ isMembersLoading: false });
-    }
-  },
-
-  fetchGroupInstances: async (groupId: string) => {
-    set({ isInstancesLoading: true });
-    try {
-      const result = await window.electron.getGroupInstances(groupId);
-      if (result.success && result.instances) {
-        set({
-          instances: result.instances,
-          lastFetchedAt: { ...get().lastFetchedAt, instances: Date.now() }
-        });
-
-        // Also update the group's activeInstanceCount in myGroups
-        const myGroups = get().myGroups;
-        const groupIndex = myGroups.findIndex(g => g.id === groupId);
-        if (groupIndex !== -1) {
-          const updatedGroups = [...myGroups];
-          updatedGroups[groupIndex] = {
-            ...updatedGroups[groupIndex],
-            activeInstanceCount: result.instances.length
-          };
-          set({ myGroups: updatedGroups });
-        }
-      }
-    } catch (error) {
-      console.error('Failed to fetch instances', error);
-    } finally {
-      set({ isInstancesLoading: false });
-    }
-  },
-
-  fetchAllGroupsInstances: async () => {
-    const myGroups = get().myGroups;
-    // Limit concurrency to avoid slamming the API if user has many groups
-    // But since this is local IPC mostly (unless cached), 
-    // actually getGroupInstances does a network call.
-    // So we should be careful. 
-    // However, for now, simple Promise.all is probably okay if N is small (<50).
-
-    // Iterate through groups and update instance counts
-    for (const group of myGroups) {
-      // We use the SINGLE fetch method which handles updating state
-      // But wait, the SINGLE fetch method updates `instances` which is the SELECTED group instances.
-      // We don't want to overwrite `instances` (selected group view) with random group instances.
-      // We probably ONLY want to update the counts on the group objects.
-
-      // Let's create a specialized internal fetching logic or modify the loop.
-
-      try {
-        const result = await window.electron.getGroupInstances(group.id);
-        if (result.success && result.instances) {
-          // Capture instances to avoid closure issues or race conditions if needed, 
-          // though here simple variable is fine.
-          const instanceCount = result.instances.length;
-
-          set(state => {
-            const newGroups = state.myGroups.map(g =>
-              g.id === group.id
-                ? { ...g, activeInstanceCount: instanceCount }
-                : g
-            );
-            return { myGroups: newGroups };
-          });
-        }
-      } catch (e) {
-        console.error(`Failed to fetch instances for ${group.id}`, e);
-      }
-    }
-  },
-
-  respondToRequest: async (groupId: string, userId: string, action: 'accept' | 'deny') => {
-    try {
-      const result = await window.electron.respondToGroupRequest(groupId, userId, action);
-      if (result.success) {
-        set(state => ({
-          requests: state.requests.filter(req => req.user.id !== userId)
-        }));
-        // Optionally fetch members if accepted, but pipeline usually handles it
-        if (action === 'accept') {
-          // Optimistic update or waiting for pipeline
-        }
-      } else {
-        console.error(`Failed to ${action} request:`, result.error);
-      }
-      return result;
-    } catch (error) {
-      console.error(`Failed to ${action} request:`, error);
-      return { success: false, error: getErrorMessage(error) };
-    }
-  },
-
-  // ========================================
-  // PIPELINE EVENT HANDLING
-  // ========================================
-
-  handlePipelineEvent: (event: PipelineEvent) => {
-    const state = get();
-    const selectedGroupId = state.selectedGroup?.id;
-
-    // Initialize debounced functions lazily (need access to store methods)
-    if (!debouncedFetchMembers) {
-      debouncedFetchMembers = debounce((groupId: string) => {
-        get().fetchGroupMembers(groupId);
-      }, 1000); // 1 second debounce
-    }
-    if (!debouncedFetchGroups) {
-      debouncedFetchGroups = debounce(() => {
-        get().fetchMyGroups();
-      }, 1000); // 1 second debounce
-    }
-
-    // Extract groupId from event content if present
-    const eventGroupId = (event.content as { groupId?: string; member?: { groupId?: string }; role?: { groupId?: string } })
-      .groupId ||
-      (event.content as { member?: { groupId?: string } }).member?.groupId ||
-      (event.content as { role?: { groupId?: string } }).role?.groupId;
-
-    switch (event.type) {
-      case 'group-member-updated':
-        // If this is for our selected group, trigger a debounced members refresh
-        if (eventGroupId && eventGroupId === selectedGroupId) {
-          set({ hasRealtimeUpdate: true, lastPipelineEvent: event });
-          // Debounced to prevent rapid API calls when multiple events arrive
-          debouncedFetchMembers(selectedGroupId);
-        }
-        break;
-
-      case 'group-role-updated':
-        // Role changes can affect permissions - refresh members (debounced)
-        if (eventGroupId && eventGroupId === selectedGroupId) {
-          set({ hasRealtimeUpdate: true, lastPipelineEvent: event });
-          debouncedFetchMembers(selectedGroupId);
-        }
-        break;
-
-      case 'group-joined':
-        // User (logged-in user) joined a group - refresh group list (debounced)
-        set({ hasRealtimeUpdate: true, lastPipelineEvent: event });
-        debouncedFetchGroups();
-        break;
-
-      case 'group-left':
-        // User (logged-in user) left a group - refresh group list (debounced)
-        set({ hasRealtimeUpdate: true, lastPipelineEvent: event });
-        debouncedFetchGroups();
-        // If we left the currently selected group, deselect it
-        if (eventGroupId && eventGroupId === selectedGroupId) {
-          set({ selectedGroup: null });
-        }
-        break;
-
-      default:
-        // Other events don't affect group state
-        break;
-    }
-  },
-
-  clearRealtimeUpdate: () => {
-    set({ hasRealtimeUpdate: false });
-  },
-
-  enterRoamingMode: () => {
-    set({
+export const useGroupStore = create<GroupState>()(
+  persist(
+    (set, get) => ({
+      myGroups: [],
       selectedGroup: null,
-      isRoamingMode: true,
+      isRoamingMode: false,
+      isLoading: false,
+      isPartialLoading: false,
+      error: null,
+
       requests: [],
       bans: [],
       members: [],
       instances: [],
-      lastFetchedAt: { requests: 0, bans: 0, members: 0, instances: 0 },
+
+      isRequestsLoading: false,
+      isBansLoading: false,
+      isMembersLoading: false,
+      isInstancesLoading: false,
+
+      lastFetchedAt: {
+        requests: 0,
+        bans: 0,
+        members: 0,
+        instances: 0,
+      },
+
       hasRealtimeUpdate: false,
-      lastPipelineEvent: null
-    });
-  },
+      lastPipelineEvent: null,
 
-  exitRoamingMode: () => {
-    set({ isRoamingMode: false });
-  },
+      getLastFetchedAt: (type) => get().lastFetchedAt[type],
 
-  loadMoreMembers: async (groupId: string) => {
-    const state = get();
-    if (state.isMembersLoading) return;
+      fetchMyGroups: async () => {
+        set({ isLoading: true, error: null });
+        try {
+          const result = await window.electron.getMyGroups() as any;
+          if (result.success && result.groups) {
+            // If it's a partial result (Stage 1), we mark as partial loading
+            // so the UI can show a refresh indicator
+            set({
+              myGroups: result.groups as Group[],
+              isLoading: result.isPartial ? false : false, // We unlock UI immediately
+              isPartialLoading: !!result.isPartial
+            });
+          } else {
+            set({ error: result.error || 'Failed to fetch groups', isLoading: false });
+          }
+        } catch (err: unknown) {
+          set({ error: getErrorMessage(err) || 'Failed to fetch groups', isLoading: false });
+        }
+      },
 
-    const currentCount = state.members.length;
-    // Safety: Don't load more if we probably have all of them (sanity check)
-    // but VRChat member counts can be desync'd, so relying on return count is better.
+      handleGroupVerified: (group: Group) => {
+        // Merge the verified group into the list
+        set(state => {
+          const existingIndex = state.myGroups.findIndex(g => g.id === group.id);
 
-    set({ isMembersLoading: true });
-    try {
-      const result = await window.electron.getGroupMembers(groupId, currentCount, 100);
-      if (result.success && result.members) {
-        if (result.members.length === 0) {
-          // End of list reached
-        } else {
-          set((prev) => ({
-            members: [...prev.members, ...result.members!],
-            lastFetchedAt: { ...prev.lastFetchedAt, members: Date.now() }
-          }));
+          let newGroups;
+          if (existingIndex !== -1) {
+            // Update existing
+            newGroups = [...state.myGroups];
+            newGroups[existingIndex] = { ...newGroups[existingIndex], ...group };
+          } else {
+            // Add new (append)
+            newGroups = [...state.myGroups, group];
+          }
+
+          return { myGroups: newGroups };
+        });
+      },
+
+      setGroups: (groups: Group[]) => {
+        set({ myGroups: groups, isPartialLoading: false, isLoading: false });
+      },
+
+      selectGroup: (group) => {
+        // Keep cached data when switching back to same group
+        const currentGroup = get().selectedGroup;
+        set({ isRoamingMode: false }); // Always exit roaming mode when selecting a group (or null)
+
+        if (currentGroup?.id === group?.id) {
+          return;
+        }
+
+        // Clear data only when switching to a different group
+        set({
+          selectedGroup: group,
+          requests: [],
+          bans: [],
+          members: [],
+          instances: [],
+          lastFetchedAt: { requests: 0, bans: 0, members: 0, instances: 0 },
+          hasRealtimeUpdate: false,
+          lastPipelineEvent: null
+        });
+      },
+
+      fetchGroupRequests: async (groupId: string) => {
+        set({ isRequestsLoading: true });
+        try {
+          const result = await window.electron.getGroupRequests(groupId);
+          if (result.success && result.requests) {
+            set({
+              requests: result.requests,
+              lastFetchedAt: { ...get().lastFetchedAt, requests: Date.now() }
+            });
+          }
+        } catch (error) {
+          console.error('Failed to fetch requests', error);
+        } finally {
+          set({ isRequestsLoading: false });
+        }
+      },
+
+      fetchGroupBans: async (groupId: string) => {
+        set({ isBansLoading: true });
+        try {
+          const result = await window.electron.getGroupBans(groupId);
+          if (result.success && result.bans) {
+            set({
+              bans: result.bans,
+              lastFetchedAt: { ...get().lastFetchedAt, bans: Date.now() }
+            });
+          }
+        } catch (error) {
+          console.error('Failed to fetch bans', error);
+        } finally {
+          set({ isBansLoading: false });
+        }
+      },
+
+      fetchGroupMembers: async (groupId: string, offset = 0) => {
+        set({ isMembersLoading: true });
+        try {
+          const result = await window.electron.getGroupMembers(groupId, offset, 100);
+          if (result.success && result.members) {
+            set((state) => ({
+              members: offset === 0 ? result.members! : [...state.members, ...result.members!],
+              lastFetchedAt: { ...state.lastFetchedAt, members: Date.now() }
+            }));
+          }
+        } catch (error) {
+          console.error('Failed to fetch members', error);
+        } finally {
+          set({ isMembersLoading: false });
+        }
+      },
+
+      fetchGroupInstances: async (groupId: string) => {
+        set({ isInstancesLoading: true });
+        try {
+          const result = await window.electron.getGroupInstances(groupId);
+          if (result.success && result.instances) {
+            set({
+              instances: result.instances,
+              lastFetchedAt: { ...get().lastFetchedAt, instances: Date.now() }
+            });
+
+            // Also update the group's activeInstanceCount in myGroups
+            const myGroups = get().myGroups;
+            const groupIndex = myGroups.findIndex(g => g.id === groupId);
+            if (groupIndex !== -1) {
+              const updatedGroups = [...myGroups];
+              updatedGroups[groupIndex] = {
+                ...updatedGroups[groupIndex],
+                activeInstanceCount: result.instances.length
+              };
+              set({ myGroups: updatedGroups });
+            }
+          }
+        } catch (error) {
+          console.error('Failed to fetch instances', error);
+        } finally {
+          set({ isInstancesLoading: false });
+        }
+      },
+
+      fetchAllGroupsInstances: async () => {
+        // UNIFIED FETCH STRATEGY (N+1 Optimization)
+        // Instead of looping through every group and hitting the API 60+ times,
+        // we make ONE call to get all instances the user can see.
+        try {
+          set({ isInstancesLoading: true });
+          const result = await window.electron.getAllActiveInstances() as any;
+
+          if (result.success && Array.isArray(result.instances)) {
+            const allInstances = result.instances;
+            const myGroups = get().myGroups;
+
+            // Create a map of GroupID -> InstanceCount
+            const groupInstanceCounts = new Map<string, number>();
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            allInstances.forEach((inst: any) => {
+              // Check various fields where group ID might be hidden
+              const gid = inst.groupId ||
+                (inst.group && inst.group.id) ||
+                (inst.ownerId && inst.ownerId.startsWith('grp_') ? inst.ownerId : null);
+
+              if (gid) {
+                groupInstanceCounts.set(gid, (groupInstanceCounts.get(gid) || 0) + 1);
+              }
+            });
+
+            // Update all groups in store with new counts
+            const newGroups = myGroups.map(g => ({
+              ...g,
+              // If we found instances, use the count. If not, default to 0. 
+              // Note: This assumes the API returns ALL active instances.
+              activeInstanceCount: groupInstanceCounts.get(g.id) || 0
+            }));
+
+            set({ myGroups: newGroups, isInstancesLoading: false });
+          } else {
+            console.warn('Unified instance fetch failed or returned invalid data', result);
+            set({ isInstancesLoading: false });
+          }
+        } catch (e) {
+          console.error(`Failed to fetch all instances unified`, e);
+          set({ isInstancesLoading: false });
+        }
+      },
+
+      respondToRequest: async (groupId: string, userId: string, action: 'accept' | 'deny') => {
+        try {
+          const result = await window.electron.respondToGroupRequest(groupId, userId, action);
+          if (result.success) {
+            set(state => ({
+              requests: state.requests.filter(req => req.user.id !== userId)
+            }));
+            // Optionally fetch members if accepted, but pipeline usually handles it
+            if (action === 'accept') {
+              // Optimistic update or waiting for pipeline
+            }
+          } else {
+            console.error(`Failed to ${action} request:`, result.error);
+          }
+          return result;
+        } catch (error) {
+          console.error(`Failed to ${action} request:`, error);
+          return { success: false, error: getErrorMessage(error) };
+        }
+      },
+
+      // ========================================
+      // PIPELINE EVENT HANDLING
+      // ========================================
+
+      handlePipelineEvent: (event: PipelineEvent) => {
+        const state = get();
+        const selectedGroupId = state.selectedGroup?.id;
+
+        // Initialize debounced functions lazily (need access to store methods)
+        if (!debouncedFetchMembers) {
+          debouncedFetchMembers = debounce((groupId: string) => {
+            get().fetchGroupMembers(groupId);
+          }, 1000); // 1 second debounce
+        }
+        if (!debouncedFetchGroups) {
+          debouncedFetchGroups = debounce(() => {
+            get().fetchMyGroups();
+          }, 1000); // 1 second debounce
+        }
+
+        // Extract groupId from event content if present
+        const eventGroupId = (event.content as { groupId?: string; member?: { groupId?: string }; role?: { groupId?: string } })
+          .groupId ||
+          (event.content as { member?: { groupId?: string } }).member?.groupId ||
+          (event.content as { role?: { groupId?: string } }).role?.groupId;
+
+        switch (event.type) {
+          case 'group-member-updated':
+            // If this is for our selected group, trigger a debounced members refresh
+            if (eventGroupId && eventGroupId === selectedGroupId) {
+              set({ hasRealtimeUpdate: true, lastPipelineEvent: event });
+              // Debounced to prevent rapid API calls when multiple events arrive
+              debouncedFetchMembers(selectedGroupId);
+            }
+            break;
+
+          case 'group-role-updated':
+            // Role changes can affect permissions - refresh members (debounced)
+            if (eventGroupId && eventGroupId === selectedGroupId) {
+              set({ hasRealtimeUpdate: true, lastPipelineEvent: event });
+              debouncedFetchMembers(selectedGroupId);
+            }
+            break;
+
+          case 'group-joined':
+            // User (logged-in user) joined a group - refresh group list (debounced)
+            set({ hasRealtimeUpdate: true, lastPipelineEvent: event });
+            debouncedFetchGroups();
+            break;
+
+          case 'group-left':
+            // User (logged-in user) left a group - refresh group list (debounced)
+            set({ hasRealtimeUpdate: true, lastPipelineEvent: event });
+            debouncedFetchGroups();
+            // If we left the currently selected group, deselect it
+            if (eventGroupId && eventGroupId === selectedGroupId) {
+              set({ selectedGroup: null });
+            }
+            break;
+
+          default:
+            // Other events don't affect group state
+            break;
+        }
+      },
+
+      clearRealtimeUpdate: () => {
+        set({ hasRealtimeUpdate: false });
+      },
+
+      enterRoamingMode: () => {
+        set({
+          selectedGroup: null,
+          isRoamingMode: true,
+          requests: [],
+          bans: [],
+          members: [],
+          instances: [],
+          lastFetchedAt: { requests: 0, bans: 0, members: 0, instances: 0 },
+          hasRealtimeUpdate: false,
+          lastPipelineEvent: null
+        });
+      },
+
+      exitRoamingMode: () => {
+        set({ isRoamingMode: false });
+      },
+
+      loadMoreMembers: async (groupId: string) => {
+        const state = get();
+        if (state.isMembersLoading) return;
+
+        const currentCount = state.members.length;
+        // Safety: Don't load more if we probably have all of them (sanity check)
+        // but VRChat member counts can be desync'd, so relying on return count is better.
+
+        set({ isMembersLoading: true });
+        try {
+          const result = await window.electron.getGroupMembers(groupId, currentCount, 100);
+          if (result.success && result.members) {
+            if (result.members.length === 0) {
+              // End of list reached
+            } else {
+              set((prev) => ({
+                members: [...prev.members, ...result.members!],
+                lastFetchedAt: { ...prev.lastFetchedAt, members: Date.now() }
+              }));
+            }
+          }
+        } catch (error) {
+          console.error('Failed to load more members', error);
+        } finally {
+          set({ isMembersLoading: false });
         }
       }
-    } catch (error) {
-      console.error('Failed to load more members', error);
-    } finally {
-      set({ isMembersLoading: false });
+    }),
+    {
+      name: 'group-store-storage', // unique name
+      storage: createJSONStorage(() => localStorage), // (optional) by default, 'localStorage' is used
+      partialize: (state) => ({ myGroups: state.myGroups }),
     }
-  }
-}));
+  )
+);
 
 // ========================================
 // PIPELINE SUBSCRIPTION HELPER

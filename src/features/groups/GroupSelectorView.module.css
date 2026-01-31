@@ -553,21 +553,47 @@
   z-index: 1;
 }
 
-/* --- ROAMING CARD STYLE --- */
+/* --- ROAMING CARD --- */
 
 .cardRoaming {
-  border-color: #22c55e !important;
-  overflow: visible !important;
-  z-index: 10;
+  justify-content: flex-end !important;
+  /* Always align bottom */
 }
 
+/* Ensure legible text on background for Roaming Card in all sizes */
+.cardRoaming .groupName {
+  text-align: left;
+  width: 100%;
+  z-index: 20;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.8);
+  font-size: 1rem;
+  padding: 0 0.5rem;
+}
+
+/* Force overlay background for readability */
 .cardRoaming::after {
-  content: "";
+  content: '';
   position: absolute;
-  inset: -2px;
-  border-radius: 18px;
-  border: 4px solid #22c55e;
-  box-shadow: 0 0 25px rgba(34, 197, 94, 0.5);
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 60%;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.9), transparent);
   pointer-events: none;
-  z-index: 60;
+  z-index: 2;
+  /* Below text (5/20) but above bg (1) */
+  border-bottom-left-radius: 16px;
+  border-bottom-right-radius: 16px;
+}
+
+/* Compact Roaming Card Specifics - Smaller text */
+.cardCompact.cardRoaming .groupName {
+  font-size: 0.7rem;
+  line-height: 1.1;
+  padding: 0 0.4rem 0.4rem 0.4rem;
+  white-space: normal;
+  /* Allow wrapping if needed, though cardCompact usually clamps */
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  /* Limit to 2 lines in this tiny view */
 }

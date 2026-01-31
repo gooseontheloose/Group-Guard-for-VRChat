@@ -108,12 +108,14 @@ class PlayerLogService {
 
     public initialize(userDataDir: string) {
         this.dbPath = path.join(userDataDir, 'player_log.jsonl');
-        this.isInitialized = true;
 
         // AUTO-FIX: Remove known corrupted entries from log history
+        // Run BEFORE enabling listeners to ensure atomic cleanup
         this.cleanupDatabase();
 
         this.loadRecentIds();
+
+        this.isInitialized = true;
         logger.info(`PlayerLogService initialized. DB Path: ${this.dbPath}`);
     }
 
@@ -240,6 +242,7 @@ class PlayerLogService {
         type?: 'join' | 'leave' | 'all';
         startDate?: string;
         endDate?: string;
+        instanceId?: string;
     } = {}): Promise<PlayerLogEntry[]> {
         const { limit, search, type = 'all', startDate, endDate } = options;
 
@@ -279,6 +282,10 @@ class PlayerLogService {
             if (endDate) {
                 const end = new Date(endDate).getTime();
                 entries = entries.filter(e => new Date(e.timestamp).getTime() <= end);
+            }
+
+            if (options.instanceId) {
+                entries = entries.filter(e => e.instanceId === options.instanceId);
             }
 
             // Return most recent first (slice only if limit specified)

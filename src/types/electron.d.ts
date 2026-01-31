@@ -184,6 +184,23 @@ export interface VRChatInstance {
   };
 }
 
+export interface VRCAvatar {
+  id: string;
+  name: string;
+  description?: string;
+  authorId?: string;
+  authorName?: string;
+  tags?: string[];
+  assetUrl?: string;
+  imageUrl?: string;
+  thumbnailImageUrl?: string;
+  releaseStatus?: string;
+  version?: number;
+  unityPackageUrl?: string;
+  unityVersion?: string;
+  [key: string]: unknown;
+}
+
 // Pipeline WebSocket Event Types
 export type PipelineEventType =
   // Notification Events
@@ -264,6 +281,12 @@ export interface LiveEntity {
   status: 'active' | 'kicked' | 'joining';
   avatarUrl?: string;
   lastUpdated: number;
+  friendStatus?: 'friend' | 'outgoing' | 'incoming' | 'none';
+  friendScore?: number;
+  metrics?: {
+    encounters: number;
+    timeSpent: number;
+  };
 }
 
 // Type for Rally Target
@@ -399,11 +422,26 @@ export interface AppSettings {
     notificationSoundPath: string | null;
     volume: number;
   };
+  notifications: {
+    enabled: boolean;
+    types: {
+      join: boolean;
+      leave: boolean;
+      automod: boolean;
+      friend: boolean;
+    };
+    behavior: {
+      desktop: boolean;
+      sound: boolean;
+      taskbarFlash: boolean;
+    };
+  };
 }
 
 export interface ElectronAPI {
   log: (level: 'info' | 'warn' | 'error', message: string) => void;
   getVersion: () => string;
+  openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
 
   // Auth API
   login: (credentials: LoginCredentials) => Promise<LoginResult>;
@@ -425,6 +463,7 @@ export interface ElectronAPI {
   respondToGroupRequest: (groupId: string, userId: string, action: 'accept' | 'deny') => Promise<{ success: boolean; error?: string }>;
   getGroupBans: (groupId: string) => Promise<{ success: boolean; bans?: GroupBan[]; error?: string }>;
   getGroupInstances: (groupId: string) => Promise<{ success: boolean; instances?: VRChatInstance[]; error?: string }>;
+  getAllActiveInstances: () => Promise<{ success: boolean; instances?: VRChatInstance[]; error?: string }>;
   onGroupsUpdated: (callback: (data: { groups: any[] }) => void) => () => void;
   onGroupsCacheReady: (callback: (data: { groupIds: string[] }) => void) => () => void;
   onGroupVerified: (callback: (data: { group: any }) => void) => () => void;
@@ -441,6 +480,11 @@ export interface ElectronAPI {
 
   // Worlds API
   getWorld: (worldId: string) => Promise<{ success: boolean; world?: { id: string; name: string; capacity?: number; imageUrl?: string; authorName?: string }; error?: string }>;
+
+  // Avatars API
+  avatars: {
+    get: (avatarId: string) => Promise<{ success: boolean; data?: VRCAvatar; error?: string }>;
+  };
 
   // User API
   getUser: (userId: string) => Promise<{ success: boolean; user?: VRChatUser; error?: string }>;
@@ -466,7 +510,7 @@ export interface ElectronAPI {
     stop: () => Promise<{ success: boolean }>;
     onPlayerJoined: (callback: (event: { displayName: string; userId?: string; timestamp: string }) => void) => () => void;
     onPlayerLeft: (callback: (event: { displayName: string; userId?: string; timestamp: string }) => void) => () => void;
-    onLocation: (callback: (event: { worldId: string; timestamp: string }) => void) => () => void;
+    onLocation: (callback: (event: { worldId: string; instanceId?: string; location?: string; timestamp: string }) => void) => () => void;
     onWorldName: (callback: (event: { name: string; timestamp: string }) => void) => () => void;
     onGameClosed: (callback: () => void) => () => void;
     onVoteKick: (callback: (event: { target: string; initiator: string; timestamp: string }) => void) => () => void;
@@ -496,6 +540,7 @@ export interface ElectronAPI {
     selectFolder: () => Promise<string | null>;
     setPath: (path: string) => Promise<boolean>;
     reconfigure: () => Promise<boolean>;
+    openFolder: () => Promise<boolean>;
   };
 
   // Instance Presence API
@@ -518,6 +563,7 @@ export interface ElectronAPI {
 
     getCurrentGroup: () => Promise<string | null>;
     onGroupChanged: (callback: (groupId: string | null) => void) => () => void;
+    getHealthStats: () => Promise<{ success: boolean; stats?: { enrichmentQueue: number; isEnriching: boolean } }>;
   };
 
 
@@ -612,6 +658,7 @@ export interface ElectronAPI {
     import: (json: string) => Promise<boolean>;
     export: () => Promise<string>;
     searchScannedUsers: (query: string) => Promise<ScannedUser[]>;
+    getScannedUser: (userId: string) => Promise<ScannedUser | null>;
     onUpdate: (callback: (data: { entities: WatchedEntity[]; tags: ModerationTag[] }) => void) => () => void;
   };
 
@@ -653,6 +700,13 @@ export interface ElectronAPI {
     setUserNote: (userId: string, note: string) => Promise<{ success: boolean; error?: string }>;
   };
 
+  // Player Flags API
+  playerFlags: {
+    getFlags: (userId: string) => Promise<string[]>;
+    setFlags: (userId: string, flagIds: string[]) => Promise<boolean>;
+    getDefinitions: () => Promise<{ id: string; label: string; description: string; type: 'negative' | 'positive'; color: string }[]>;
+  };
+
   // Debug API (developer tools)
   debug: {
     selectFriendJson: () => Promise<{ success: boolean; path?: string; count?: number; preview?: string[]; error?: string }>;
@@ -664,7 +718,7 @@ export interface ElectronAPI {
   friendship: {
     getStatus: () => Promise<{ initialized: boolean }>;
     getGameLog: (limit?: number) => Promise<GameLogEntry[]>;
-    getPlayerLog: (options?: { limit?: number; search?: string; type?: 'join' | 'leave' | 'all' }) => Promise<PlayerLogEntry[]>;
+    getPlayerLog: (options?: { limit?: number; search?: string; type?: 'join' | 'leave' | 'all'; instanceId?: string }) => Promise<PlayerLogEntry[]>;
     getFriendLocations: () => Promise<FriendLocation[]>;
     getSocialFeed: (limit?: number) => Promise<SocialFeedEntry[]>;
     getRelationshipEvents: (limit?: number) => Promise<RelationshipEvent[]>;
@@ -695,6 +749,7 @@ export interface ElectronAPI {
     }>;
     getFriendsList: () => Promise<FriendListItem[]>;
     getMutualsBatch: (userIds: string[]) => Promise<Record<string, { friends: number; groups: number }>>;
+    onStatsUpdate: (callback: (data: { userIds: string[]; addedMinutes: number }) => void) => () => void;
   };
 }
 

@@ -63,8 +63,8 @@ export const LocationsView: React.FC = () => {
     const { profile, openUserProfile, openWorldProfile, openGroupProfile, closeProfile } = useProfileModal();
 
     const handleJoinInstance = (location: string) => {
-        // Use VRChat launch protocol
-        window.open(`vrchat://launch?ref=groupguard&id=${encodeURIComponent(location)}`, '_blank');
+        // Use VRChat launch protocol via Main process to bypass renderer restrictions
+        window.electron.openExternal(`vrchat://launch?ref=groupguard&id=${encodeURIComponent(location)}`);
     };
     const [worldCache, setWorldCache] = useState<Map<string, WorldInfo>>(new Map());
     const [groupCache, setGroupCache] = useState<Map<string, GroupInfo>>(new Map());
@@ -148,17 +148,13 @@ export const LocationsView: React.FC = () => {
         // Initial fetch - force API refresh to purge offline players on load
         fetchFriends(true);
 
-        // Listen for updates (passive updates from WebSocket)
+        // Listen for updates (passive updates from WebSocket or background poller)
         if (window.electron?.friendship?.onUpdate) {
             const unsubscribe = window.electron.friendship.onUpdate(() => {
                 fetchFriends();
             });
             return () => unsubscribe();
         }
-
-        // Auto-refresh every 15 seconds (active API refresh)
-        const interval = setInterval(() => fetchFriends(true), 15000);
-        return () => clearInterval(interval);
     }, [fetchFriends]);
 
     // Group friends by instance location
@@ -482,6 +478,7 @@ export const LocationsView: React.FC = () => {
                                                     flexDirection: 'column',
                                                     gap: '1rem',
                                                     width: 'fit-content',
+                                                    minWidth: '400px',
                                                     maxWidth: '100%'
                                                 }}
                                             >

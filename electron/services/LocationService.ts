@@ -17,6 +17,7 @@ export interface FriendLocation {
     userIcon?: string;
     profilePicOverride?: string;
     currentAvatarThumbnailImageUrl?: string;
+    currentAvatarId?: string;
     statusDescription?: string;
     representedGroup?: string;
 }
@@ -31,16 +32,19 @@ class LocationService {
     private snapshotPath: string | null = null;
     private friends = new Map<string, FriendLocation>();
 
-    constructor() {
-        // Setup listeners
-        // Note: PipelineService emits via windowService.broadcast usually.
-        // But we need to listen internally. 
-        // We should add a listener to the IPC or just make PipelineService emit to a NodeJS event emitter too.
-        // For now, let's assume we can listen to `serviceEventBus` if we bridge it, 
-        // OR we can expose a method `updateFriendStatus` that PipelineService calls.
+    private selfLocation: { location: string; worldId?: string; instanceId?: string } | null = null;
 
-        // BETTER ARCHITECTURE: PipelineService should emit events to `serviceEventBus`.
-        // I will need to update PipelineService to emit 'friend-update' to the bus.
+    constructor() {
+        // Listen for self location updates
+        serviceEventBus.on('location', (event: any) => {
+            if (event.location) {
+                this.selfLocation = {
+                    location: event.location,
+                    worldId: event.worldId,
+                    instanceId: event.instanceId
+                };
+            }
+        });
     }
 
     public initialize(userDataDir: string) {
@@ -75,7 +79,8 @@ class LocationService {
         const locationChanged = data.location !== undefined && data.location !== existing.location;
         const descriptionChanged = data.statusDescription !== undefined && data.statusDescription !== existing.statusDescription;
         const groupChanged = data.representedGroup !== undefined && data.representedGroup !== existing.representedGroup;
-        const avatarChanged = data.currentAvatarThumbnailImageUrl !== undefined && data.currentAvatarThumbnailImageUrl !== existing.currentAvatarThumbnailImageUrl;
+        const avatarChanged = (data.currentAvatarThumbnailImageUrl !== undefined && data.currentAvatarThumbnailImageUrl !== existing.currentAvatarThumbnailImageUrl) ||
+            (data.currentAvatarId !== undefined && data.currentAvatarId !== existing.currentAvatarId);
 
         const updated: FriendLocation = {
             ...existing,
@@ -86,6 +91,7 @@ class LocationService {
             userIcon: data.userIcon || existing.userIcon,
             profilePicOverride: data.profilePicOverride || existing.profilePicOverride,
             currentAvatarThumbnailImageUrl: data.currentAvatarThumbnailImageUrl || existing.currentAvatarThumbnailImageUrl,
+            currentAvatarId: data.currentAvatarId || existing.currentAvatarId,
             representedGroup: data.representedGroup || existing.representedGroup,
             lastUpdated: new Date().toISOString()
         };
@@ -94,6 +100,7 @@ class LocationService {
 
         // Emit state change event if something actually changed
         if (statusChanged || locationChanged || descriptionChanged || groupChanged || avatarChanged) {
+            // ...
             if (isNowOffline) {
                 logger.info(`Friend ${updated.displayName} (${updated.userId}) went offline.`);
             } else if (locationChanged) {
@@ -145,7 +152,8 @@ class LocationService {
             const locationChanged = !existing || existing.location !== f.location;
             const descriptionChanged = !existing || existing.statusDescription !== f.statusDescription;
             const groupChanged = !existing || existing.representedGroup !== f.representedGroup;
-            const avatarChanged = !existing || existing.currentAvatarThumbnailImageUrl !== f.currentAvatarThumbnailImageUrl;
+            const avatarChanged = (!existing || existing.currentAvatarThumbnailImageUrl !== f.currentAvatarThumbnailImageUrl) ||
+                (!existing || existing.currentAvatarId !== f.currentAvatarId);
 
             if (statusChanged || locationChanged || descriptionChanged || groupChanged || avatarChanged) {
                 serviceEventBus.emit('friend-state-changed', {
@@ -161,6 +169,14 @@ class LocationService {
 
     public getAllFriends(): FriendLocation[] {
         return Array.from(this.friends.values());
+    }
+
+    public getFriend(userId: string): FriendLocation | undefined {
+        return this.friends.get(userId);
+    }
+
+    public getSelfLocation() {
+        return this.selfLocation;
     }
 
     private loadSnapshot() {

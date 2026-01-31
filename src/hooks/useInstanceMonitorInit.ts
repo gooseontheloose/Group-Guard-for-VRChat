@@ -6,17 +6,16 @@ import {
 import { useGroupStore } from "../stores/groupStore";
 
 export function useInstanceMonitorInit(isAuthenticated: boolean) {
-  const {
-    addPlayer,
-    removePlayer,
-    setWorldId,
-    setInstanceInfo,
-    setWorldName,
-    setInstanceImage,
-    clearInstance,
-    clearLiveScan,
-    setCurrentGroupId,
-  } = useInstanceMonitorStore();
+  const addPlayer = useInstanceMonitorStore(state => state.addPlayer);
+  const removePlayer = useInstanceMonitorStore(state => state.removePlayer);
+  const setWorldId = useInstanceMonitorStore(state => state.setWorldId);
+  const setInstanceInfo = useInstanceMonitorStore(state => state.setInstanceInfo);
+  const setWorldName = useInstanceMonitorStore(state => state.setWorldName);
+  const setInstanceImage = useInstanceMonitorStore(state => state.setInstanceImage);
+  const clearInstance = useInstanceMonitorStore(state => state.clearInstance);
+  const clearLiveScan = useInstanceMonitorStore(state => state.clearLiveScan);
+  const setCurrentGroupId = useInstanceMonitorStore(state => state.setCurrentGroupId);
+
   const { isRoamingMode, exitRoamingMode } = useGroupStore();
 
   // Clear live scan history when exiting roaming mode
@@ -30,9 +29,6 @@ export function useInstanceMonitorInit(isAuthenticated: boolean) {
 
   useEffect(() => {
     if (!isAuthenticated) return;
-
-    // Start watching logs
-    window.electron.logWatcher.start();
 
     // Fetch initial group state
     window.electron.instance
@@ -63,8 +59,6 @@ export function useInstanceMonitorInit(isAuthenticated: boolean) {
         // NOTE: We don't call clearInstance() here - setInstanceInfo will only clear
         // when the instance ID actually changes. This preserves cache when rejoining
         // the same instance.
-        setWorldId(event.worldId);
-
         // Extended event type for instance info
         interface LocationEventExtended {
           worldId: string;
@@ -73,9 +67,14 @@ export function useInstanceMonitorInit(isAuthenticated: boolean) {
           location?: string;
         }
         const extEvent = event as LocationEventExtended;
+
+        // 1. Set Instance Info FIRST (This might clear currentWorldId in the store)
         if (extEvent.instanceId && extEvent.location) {
           setInstanceInfo(extEvent.instanceId, extEvent.location);
         }
+
+        // 2. Set World ID SECOND (To ensure it persists)
+        setWorldId(event.worldId);
 
         // Fetch world details if we can (to fix "Unknown World")
         try {
@@ -113,6 +112,15 @@ export function useInstanceMonitorInit(isAuthenticated: boolean) {
       exitRoamingMode();
     });
 
+    // Capture Enriched Metadata (Rank, Avatar)
+    const cleanupEntityUpdate = window.electron.instance.onEntityUpdate((entity) => {
+      const updateEntity = useInstanceMonitorStore.getState().updateEntity;
+      updateEntity(entity);
+    });
+
+    // Start watching logs AFTER listeners are set up
+    window.electron.logWatcher.start();
+
     return () => {
       cleanupJoined();
       cleanupLeft();
@@ -120,6 +128,7 @@ export function useInstanceMonitorInit(isAuthenticated: boolean) {
       cleanupWorldName();
       cleanupGroup();
       cleanupGameClosed();
+      cleanupEntityUpdate();
       window.electron.logWatcher.stop();
     };
   }, [

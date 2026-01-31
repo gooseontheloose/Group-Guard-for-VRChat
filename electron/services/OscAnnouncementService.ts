@@ -163,12 +163,22 @@ class OscAnnouncementService {
     }
 
     private handlePlayerJoined(event: PlayerJoinedEvent) {
-        logger.info(`[handlePlayerJoined] Player: ${event.displayName}, ActiveGroup: ${this.activeGroupId}, isBackfill: ${event.isBackfill}`);
+        if (!event.isBackfill) {
+            logger.info(`[handlePlayerJoined] Player: ${event.displayName}, ActiveGroup: ${this.activeGroupId}, isBackfill: ${event.isBackfill}`);
+        } else {
+            // logger.debug(`[handlePlayerJoined] Player: ${event.displayName}, ActiveGroup: ${this.activeGroupId}, isBackfill: ${event.isBackfill}`);
+        }
 
         this.currentPlayers.add(event.displayName);
 
         if (!this.activeGroupId) {
             logger.debug(`[handlePlayerJoined] No active group, skipping greeting.`);
+            return;
+        }
+
+        // Ignore backfilled players (those already in the instance when we joined)
+        if (event.isBackfill) {
+            logger.debug(`[handlePlayerJoined] Skipping greeting for backfilled player: ${event.displayName}`);
             return;
         }
 

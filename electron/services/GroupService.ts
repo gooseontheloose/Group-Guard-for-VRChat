@@ -127,6 +127,45 @@ export function setupGroupHandlers() {
         });
     }
 
+    // Get ALL active instances (Unified Fetch)
+    ipcMain.handle('groups:get-all-active-instances', async () => {
+        const client = getVRChatClient();
+        if (!client) return { success: false, error: "Not authenticated" };
+        const userId = getCurrentUserId();
+        if (!userId) return { success: false, error: "Not authenticated" };
+
+        return networkService.execute(async () => {
+            // Strategy: Use getUserGroupInstances to get everything at once
+            const response = await client.getUserGroupInstances({
+                path: { userId }
+            });
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            let allInstances = (response.data || response) as any;
+
+            // Handle { instances: [...] } wrapper commonly returned by VRChat API
+            if (!Array.isArray(allInstances) && allInstances && Array.isArray(allInstances.instances)) {
+                logger.info(`[GroupService] Extracting instances from wrapped response for unified fetch`);
+                allInstances = allInstances.instances;
+            }
+
+            if (!Array.isArray(allInstances)) {
+                // Safe logging for BigInt
+                logger.warn('[GroupService] getAllActiveInstances returned non-array:',
+                    JSON.stringify(allInstances, (key, value) => typeof value === 'bigint' ? value.toString() : value)
+                );
+                return { instances: [] };
+            }
+
+            logger.info(`[GroupService] Fetched ${allInstances.length} active instances across all groups (Unified)`);
+            return { instances: allInstances };
+
+        }, 'groups:get-all-active-instances').then(res => {
+            if (res.success) return { success: true, instances: res.data?.instances };
+            return { success: false, error: res.error };
+        });
+    });
+
     // Get specific group details (Strict Moderation Only)
     ipcMain.handle('groups:get-details', async (_event, { groupId }: { groupId: string }) => {
         groupAuthorizationService.validateAccess(groupId, 'groups:get-details');

@@ -14,6 +14,7 @@ export { clearSessionStore };
 
 // Import the VRChat SDK
 import { VRChat, CurrentUser, Instance } from 'vrchat';
+import { VRChatUser } from '../../src/types/electron';
 
 // Store the VRChat SDK instance in memory (Main Process)
 interface VRChatClientInternal {
@@ -835,6 +836,7 @@ export async function checkOnlineStatus(): Promise<boolean> {
   if (!vrchatClient || !currentUser) return false;
 
   try {
+<<<<<<< HEAD
     // We can fetch our own user entry. 
     // Optimized: Just check /auth/user which is cached/fast usually, or check presence?
     // fetching user with client.getCurrentUser() is reliable.
@@ -845,6 +847,26 @@ export async function checkOnlineStatus(): Promise<boolean> {
     // state: 'offline', 'active', 'online'
     const u = user as unknown as Record<string, unknown>;
     if (u && (u.state === 'offline' || u.status === 'offline')) {
+=======
+      // We can fetch our own user entry. 
+      // Optimized: Just check /auth/user which is cached/fast usually, or check presence?
+      // fetching user with client.getCurrentUser() is reliable.
+      const userResponse = await vrchatClient.getCurrentUser();
+      const user = userResponse?.data || userResponse;
+      
+      // If user is present, check 'state' or 'status'
+      // state: 'offline', 'active', 'online'
+      const u = user as unknown as VRChatUser;
+      if (u && (u.state === 'offline' || u.status === 'offline')) {
+          return false;
+      }
+      return true;
+  } catch (error) {
+      logger.warn('Failed to check online status:', error);
+      // Assume offline on error? Or keep alive? 
+      // If API fails, we probably shouldn't kill the session immediately unless it's a 401.
+      // But for "Game Closed" detection, if API fails, maybe we are just disconnected.
+>>>>>>> main
       return false;
     }
     return true;

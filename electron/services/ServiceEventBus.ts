@@ -12,10 +12,21 @@ export type ServiceEventType =
     | 'friend-update'
     | 'friend-state-changed'
     | 'social-feed-entry-added'
+    | 'friendship-relationship-changed'
     | 'player-joined'
-    | 'player-left';
+    | 'player-left'
+    | 'location'
+    | 'friend-stats-updated';
 
 export interface ServiceEventPayloads {
+    'location': {
+        location: string;
+        worldId?: string;
+        instanceId?: string;
+        worldName?: string;
+        timestamp?: string
+    };
+    'friend-stats-updated': { userIds: string[]; addedMinutes: number };
     'groups-updated': { groups: { id: string;[key: string]: unknown }[] };
     'groups-raw': { groups: { id: string;[key: string]: unknown }[]; userId: string };
     'groups-cache-ready': { groupIds: string[] };
@@ -46,6 +57,7 @@ export interface ServiceEventPayloads {
         timestamp: string;
         isBackfill?: boolean;
     };
+    'friendship-relationship-changed': { event: any };
 }
 
 class ServiceEventBus extends EventEmitter {

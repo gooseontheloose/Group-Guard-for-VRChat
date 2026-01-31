@@ -56,8 +56,23 @@ model ScannedUser {
   lastSeenAt       DateTime @updatedAt
   groupId          String?  // Which group context they were last seen in
   timesEncountered Int      @default(1)
+  flags            String?   // JSON array of flag IDs
   
   @@index([displayName])
   @@index([groupId])
   @@index([lastSeenAt])
+}
+
+model FriendStats {
+  userId           String   @id
+  displayName      String
+  timeSpentMinutes Int      @default(0)
+  encounterCount   Int      @default(0)
+  lastSeen         DateTime
+  lastHeartbeat    DateTime?
+  
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([lastSeen])
 }

@@ -2,8 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { GlassPanel } from '../../components/ui/GlassPanel';
 import { NeonButton } from '../../components/ui/NeonButton';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Crosshair, ShieldAlert, Radio, RefreshCw, Activity, UserPlus, ChevronDown } from 'lucide-react';
-import { AppShieldIcon } from '../../components/ui/AppShieldIcon';
+import { Crosshair, ShieldAlert, Radio, RefreshCw, Activity } from 'lucide-react';
 import { useGroupStore } from '../../stores/groupStore';
 import { useInstanceMonitorStore, type LiveEntity } from '../../stores/instanceMonitorStore';
 import { BanUserDialog } from './dialogs/BanUserDialog';
@@ -12,25 +11,27 @@ import { RecruitResultsDialog } from './dialogs/RecruitResultsDialog';
 import { MassInviteDialog } from '../dashboard/dialogs/MassInviteDialog';
 import { AutoModAlertOverlay } from './overlays/AutoModAlertOverlay';
 import { useAutoModAlertStore } from '../../stores/autoModAlertStore';
-import { ReportGeneratorDialog } from '../reports/ReportGeneratorDialog';
+import { AddFlagDialog } from './dialogs/AddFlagDialog';
 import { StatTile } from '../dashboard/components/StatTile';
 import { EntityCard } from './components/EntityCard';
+import { Skeleton } from '../../components/ui/Skeleton';
 import { OperationStartDialog } from './dialogs/OperationStartDialog';
+import { InstanceHealthWidget } from './components/InstanceHealthWidget';
+import { LivePlayerChart } from './components/LivePlayerChart';
+import { LiveToolbar } from './components/LiveToolbar';
 
 import { useConfirm } from '../../context/ConfirmationContext';
 import { useNotificationStore } from '../../stores/notificationStore';
 import styles from './LiveView.module.css';
 
-interface LogEntry {
-    message: string;
-    type: 'info' | 'warn' | 'success' | 'error';
-    id: number;
-}
+import { useRoamingLogStore, type LogEntry } from '../../stores/roamingLogStore';
 
-interface ReportContext {
-    target: { displayName: string; id: string };
-    world: { name?: string };
-    timestamp: string;
+
+// Minimal interface to match what EntityCard expects, or we can map PlayerLogEntry to it.
+// EntityCard expects LiveEntity.
+// We need to map PlayerLogEntry manually since it lacks rank/status.
+interface PersistentLeftEntity extends LiveEntity {
+    leftAt: string;
 }
 
 const containerVariants = {
@@ -45,7 +46,7 @@ const containerVariants = {
 };
 
 const ToggleButton = ({ enabled, onToggle }: { enabled: boolean; onToggle: () => void }) => (
-    <div 
+    <div
         onClick={onToggle}
         className={`${styles.toggle} ${enabled ? styles.toggleEnabled : ''}`}
     >
@@ -54,6 +55,7 @@ const ToggleButton = ({ enabled, onToggle }: { enabled: boolean; onToggle: () =>
 );
 
 export const LiveView: React.FC = () => {
+    console.log('[LiveView] Rendering...');
     // PERF FIX: Use individual selectors instead of destructuring entire store
     const selectedGroup = useGroupStore(state => state.selectedGroup);
     const isRoamingMode = useGroupStore(state => state.isRoamingMode);
@@ -63,26 +65,31 @@ export const LiveView: React.FC = () => {
     const [roamingSelectedGroupId, setRoamingSelectedGroupId] = useState<string | null>(null);
     const roamingSelectedGroup = useMemo(() =>
         myGroups.find(g => g.id === roamingSelectedGroupId) || null
-    , [myGroups, roamingSelectedGroupId]);
+        , [myGroups, roamingSelectedGroupId]);
 
     // The effective group to use for invites (either selected or roaming-selected)
     const effectiveGroup = selectedGroup || roamingSelectedGroup;
-    
+
     const currentWorldName = useInstanceMonitorStore(state => state.currentWorldName);
     const currentWorldId = useInstanceMonitorStore(state => state.currentWorldId);
     const instanceImageUrl = useInstanceMonitorStore(state => state.instanceImageUrl);
     const liveScanResults = useInstanceMonitorStore(state => state.liveScanResults);
     const updateLiveScan = useInstanceMonitorStore(state => state.updateLiveScan);
     const setEntityStatus = useInstanceMonitorStore(state => state.setEntityStatus);
-    
+
     const scanActive = true;
     const entities = liveScanResults;
-    
+
     const [instanceInfo, setInstanceInfo] = useState<{ name: string; imageUrl?: string; worldId?: string; instanceId?: string } | null>(null);
-    const [logs, setLogs] = useState<LogEntry[]>([]);
+    const logs = useRoamingLogStore(state => state.logs);
+    const addLogsToStore = useRoamingLogStore(state => state.addLogs);
     const [isLoading, setIsLoading] = useState(false);
+
+    // Initial load state for the very first scan
+    const [isInitialLoad, setIsInitialLoad] = useState(true);
+    const [headerImgError, setHeaderImgError] = useState(false);
     const [customMessage, setCustomMessage] = useState('');
-    
+
     // Log Batching Refs
     const logQueueRef = React.useRef<LogEntry[]>([]);
 
@@ -92,29 +99,114 @@ export const LiveView: React.FC = () => {
             if (logQueueRef.current.length > 0) {
                 const newLogs = [...logQueueRef.current];
                 logQueueRef.current = []; // Clear queue
-                
-                setLogs(prev => {
-                    // Combine and keep only last 50
-                    const combined = [...prev, ...newLogs];
-                    return combined.slice(-50);
-                });
+
+                addLogsToStore(newLogs);
             }
         }, 500); // Flush max twice per second
-        
+
         return () => clearInterval(interval);
     }, []);
-    
 
-    
+    // Persistent "Recently Left" State
+    const [persistentLeftEntities, setPersistentLeftEntities] = useState<PersistentLeftEntity[]>([]);
 
-    
+    // Rank Cache to remember ranks of users who leave
+    const rankHistoryRef = React.useRef<Map<string, string>>(new Map());
+
+    // Update rank cache whenever we see active entities
+    useEffect(() => {
+        if (entities) {
+            entities.forEach(e => {
+                if (e.rank && e.rank !== 'Unknown' && e.rank !== 'User') {
+                    rankHistoryRef.current.set(e.id, e.rank);
+                }
+            });
+        }
+    }, [entities]);
+
+    // Fetch persistent left logs when instance ID is known
+    useEffect(() => {
+        const fetchLeftLogs = async () => {
+            if (!instanceInfo?.instanceId) return;
+
+            try {
+                // Fetch recent 'leave' events for this specific instance
+                const leaves = await window.electron.friendship.getPlayerLog({
+                    type: 'leave',
+                    instanceId: instanceInfo.instanceId,
+                    limit: 50 // Keep the last 50 left players
+                });
+
+                // Map to Entity structure for display
+                const mapped: PersistentLeftEntity[] = await Promise.all(leaves.map(async l => {
+                    const id = l.userId || l.id;
+
+                    // Try to find rank in our local history first
+                    let rank = rankHistoryRef.current.get(id);
+                    let avatarUrl: string | undefined = undefined;
+
+                    // If not found, fall back to the secure local database (Scanned Users)
+                    // This ensures persistence even effectively "offline" or after restart
+                    if (!rank) {
+                        try {
+                            // Safety: Check if API exists (handles preload mismatch)
+                            const api = window.electron.watchlist as any;
+                            if (api.getScannedUser) {
+                                const scannedUser = await api.getScannedUser(id);
+                                if (scannedUser) {
+                                    rank = scannedUser.rank || undefined;
+                                    avatarUrl = scannedUser.thumbnailUrl || undefined;
+                                }
+                            }
+                        } catch (e) {
+                            // ignore
+                        }
+                    }
+
+                    // Normalize rank if we have it, specifically fixing the +1 shift logic if it was present in cache
+                    // But here we just display what we have.
+
+                    return {
+                        id,
+                        displayName: l.displayName,
+                        rank: rank || 'User', // Use cached rank or fallback
+                        isGroupMember: false,
+                        status: 'left',
+                        avatarUrl: avatarUrl,
+                        lastUpdated: new Date(l.timestamp).getTime(),
+                        leftAt: l.timestamp
+                    };
+                }));
+
+                // Deduplicate by ID
+                const unique = new Map<string, PersistentLeftEntity>();
+                mapped.forEach(e => unique.set(e.id, e));
+
+                setPersistentLeftEntities(Array.from(unique.values()));
+            } catch (e) {
+                console.error("Failed to fetch persistent left logs", e);
+            }
+        };
+
+        fetchLeftLogs();
+        // Refresh every 10s or when instance changes
+        const interval = setInterval(fetchLeftLogs, 10000);
+        return () => clearInterval(interval);
+    }, [instanceInfo?.instanceId, entities]); // Add entities dependency to refresh logs when we learn new ranks? Maybe too frequent.
+    // Actually, keeping entities out of dep array is better to avoid spamming the log fetch. 
+    // The rankHistoryRef is updated in separate effect.
+
+
+
+
+
     // Dialog State
     const [banDialogUser, setBanUserDialog] = useState<{ id: string; displayName: string } | null>(null);
-    const [recruitResults, setRecruitResults] = useState<{ blocked: {name:string, reason?:string}[], invited: number } | null>(null);
+    const [recruitResults, setRecruitResults] = useState<{ blocked: { name: string, reason?: string }[], invited: number } | null>(null);
     const [showMassInvite, setShowMassInvite] = useState(false);
-    
-    // Report Dialog State
-    const [reportContext, setReportContext] = useState<ReportContext | null>(null);
+
+    // Flag Dialog State
+    const [flagDialogUser, setFlagDialogUser] = useState<{ id: string; displayName: string } | null>(null);
 
     // Operation Start Dialog State
     const [operationDialog, setOperationDialog] = useState<{
@@ -128,19 +220,20 @@ export const LiveView: React.FC = () => {
         title: '',
         count: 0
     });
-    
+
     // Tab state for entity list
     const [entityTab, setEntityTab] = useState<'active' | 'left'>('active');
+    const [rightTab, setRightTab] = useState<'controls' | 'telemetry'>('controls');
 
     const { confirm } = useConfirm();
     const { addNotification } = useNotificationStore();
 
     // Helpers to add logs (Batched)
     const addLog = useCallback((message: string, type: 'info' | 'warn' | 'success' | 'error' = 'info') => {
-        logQueueRef.current.push({ 
-            message, 
-            type, 
-            id: Date.now() + Math.random() 
+        logQueueRef.current.push({
+            message,
+            type,
+            id: Date.now() + Math.random()
         });
     }, []);
 
@@ -148,24 +241,35 @@ export const LiveView: React.FC = () => {
         setBanUserDialog({ id: userId, displayName: name });
     }, []);
 
-    const handleReportClick = useCallback((userId: string, name: string) => {
-        setReportContext({
-            target: { displayName: name, id: userId },
-            world: { name: instanceInfo?.name },
-            timestamp: new Date().toISOString()
-        });
-    }, [instanceInfo?.name]);
+    const handleFlagClick = useCallback((userId: string, name: string) => {
+        setFlagDialogUser({ id: userId, displayName: name });
+    }, []);
+
+    // Concurrency Control: Prevent old scans from overwriting new ones (Ghosting)
+    const scanSequenceRef = React.useRef<number>(0);
 
     const performScan = useCallback(async () => {
         if (!selectedGroup && !isRoamingMode) return;
-        
+
+        // generated scan ID
+        const scanId = Date.now();
+        scanSequenceRef.current = scanId;
+
         try {
             const scanGroupId = selectedGroup ? selectedGroup.id : undefined;
             const results = await window.electron.instance.scanSector(scanGroupId);
+
+            // Abort if a newer scan started
+            if (scanSequenceRef.current !== scanId) return;
+
             updateLiveScan(results as LiveEntity[]);
 
             if (window.electron.instance.getInstanceInfo) {
                 const info = await window.electron.instance.getInstanceInfo();
+
+                // Check again after second await
+                if (scanSequenceRef.current !== scanId) return;
+
                 if (info.success) {
                     setInstanceInfo({
                         name: info.name || currentWorldName || 'Unknown',
@@ -184,55 +288,89 @@ export const LiveView: React.FC = () => {
             }
         } catch (err) {
             console.error(err);
+        } finally {
+            if (scanSequenceRef.current === scanId) {
+                setIsInitialLoad(false);
+            }
         }
-    }, [selectedGroup, isRoamingMode, currentWorldName, currentWorldId, instanceImageUrl, updateLiveScan]);
+    }, [selectedGroup?.id, isRoamingMode, updateLiveScan]);
 
-    // Initial and Periodic Scan
+    // Actions
+    const handlePlayerJoined = useInstanceMonitorStore(state => state.handlePlayerJoined);
+    const handlePlayerLeft = useInstanceMonitorStore(state => state.handlePlayerLeft);
+    const updateEntity = useInstanceMonitorStore(state => state.updateEntity);
+
+    // Initial Scan for Hydration Only
     useEffect(() => {
         if (!selectedGroup && !isRoamingMode) return;
-        
+
         if (selectedGroup) {
             addLog(`[SYSTEM] Uplink established to ${selectedGroup.name}.`, 'success');
         } else {
-            setLogs(prev => {
-                const lastLog = prev[prev.length - 1];
-                if (lastLog && lastLog.message.includes('ROAMING MODE ENGAGED')) return prev;
-                return [...prev.slice(-49), { message: `[SYSTEM] ROAMING MODE ENGAGED. Passive Monitoring Active.`, type: 'warn', id: Date.now() }];
-            });
+            useRoamingLogStore.getState().addLog(`[SYSTEM] ROAMING MODE ENGAGED. Passive Monitoring Active.`, 'warn');
         }
 
         performScan();
-
-        const interval = setInterval(performScan, 5000);
-        return () => clearInterval(interval);
+        // NO POLLING: Event-driven updates only
     }, [selectedGroup, isRoamingMode, performScan, addLog]);
 
-    // Listen for Entity Updates (Live)
+    // Live Event Listeners (Zero Latency)
+    // STABILITY FIX: Use refs for listeners to avoid re-subscribing on every render
+    const handlersRef = React.useRef({ handlePlayerJoined, handlePlayerLeft, updateEntity, addLog });
     useEffect(() => {
-        const unsubscribe = window.electron.instance.onEntityUpdate((updatedEntity: LiveEntity) => {
-            addLog(`[SCAN] Profile Resolved: ${updatedEntity.displayName} (Rank: ${updatedEntity.rank})`, 'info');
-        });
-        return unsubscribe;
-    }, [addLog]);
+        handlersRef.current = { handlePlayerJoined, handlePlayerLeft, updateEntity, addLog };
+    }, [handlePlayerJoined, handlePlayerLeft, updateEntity, addLog]);
 
-    // LOG WATCHER INTEGRATION
     useEffect(() => {
-        window.electron.logWatcher.start();
-        
+        console.log('[LiveView] Main Effect: Mounting UI Log Listeners (Passive Mode)');
+
+        // 1. Join Events (UI Log Only)
+        const unsubJoin = window.electron.logWatcher.onPlayerJoined((event) => {
+            handlersRef.current.addLog(`[JOIN] ${event.displayName}`, 'success');
+        });
+
+        // 2. Leave Events (UI Log Only)
+        const unsubLeave = window.electron.logWatcher.onPlayerLeft((event) => {
+            handlersRef.current.addLog(`[LEFT] ${event.displayName}`, 'warn');
+        });
+
+        // 3. Entity Metadata Updates (UI Log Only)
+        const unsubEntity = window.electron.instance.onEntityUpdate((updatedEntity: LiveEntity) => {
+            handlersRef.current.addLog(`[SCAN] Profile Resolved: ${updatedEntity.displayName} (Rank: ${updatedEntity.rank})`, 'info');
+        });
+
+        // 4. Log Watcher telemetry (Pure UI)
         const unsubKick = window.electron.logWatcher.onVoteKick((event) => {
-            addLog(`[VOTE KICK] ${event.initiator} initiated vote kick against ${event.target}`, 'warn');
+            handlersRef.current.addLog(`[VOTE KICK] ${event.initiator} initiated vote kick against ${event.target}`, 'warn');
         });
 
         const unsubVideo = window.electron.logWatcher.onVideoPlay((event) => {
             const shortUrl = event.url.length > 50 ? event.url.substring(0, 47) + '...' : event.url;
-            addLog(`[VIDEO] Now Playing: ${shortUrl} (Req: ${event.requestedBy})`, 'info');
+            handlersRef.current.addLog(`[VIDEO] Now Playing: ${shortUrl} (Req: ${event.requestedBy})`, 'info');
         });
 
+        // 5. World/Instance Changes (UI Log Only)
+        const unsubLocation = window.electron.logWatcher.onLocation((event) => {
+            handlersRef.current.addLog(`[WORLD] Moved to ${event.worldId}`, 'info');
+        });
+
+        const unsubWorldName = window.electron.logWatcher.onWorldName((event) => {
+            handlersRef.current.addLog(`[WORLD] Entered: ${event.name}`, 'success');
+        });
+
+        // MOVED TO useInstanceMonitorInit.ts: window.electron.logWatcher.start();
+
         return () => {
+            console.log('[LiveView] Main Effect: Cleaning up UI Listeners');
+            unsubJoin();
+            unsubLeave();
+            unsubEntity();
             unsubKick();
             unsubVideo();
+            unsubLocation();
+            unsubWorldName();
         };
-    }, [addLog]);
+    }, []); // Run once on mount
 
     // Actions
     const handleRecruit = useCallback(async (userId: string, name: string) => {
@@ -248,7 +386,7 @@ export const LiveView: React.FC = () => {
 
     const handleKick = useCallback(async (userId: string, name: string) => {
         if (!selectedGroup) return;
-        
+
         const confirmed = await confirm({
             title: 'Confirm Kick',
             message: `Are you sure you want to KICK (Vote/Ban) ${name}?`,
@@ -257,7 +395,7 @@ export const LiveView: React.FC = () => {
         });
 
         if (!confirmed) return;
-        
+
         addLog(`[CMD] Kicking ${name}...`, 'warn');
         try {
             await window.electron.instance.kickUser(selectedGroup.id, userId);
@@ -272,10 +410,77 @@ export const LiveView: React.FC = () => {
             });
         }
     }, [selectedGroup, confirm, addLog, setEntityStatus, addNotification]);
-    
+
     const [progress, setProgress] = useState<{ current: number, total: number } | null>(null);
     const [progressMode, setProgressMode] = useState<'recruit' | 'rally' | null>(null);
     const [currentProcessingUser, setCurrentProcessingUser] = useState<{ name: string; phase: 'checking' | 'inviting' | 'skipped' } | null>(null);
+
+    // SELECTION STATE (Multi-Select)
+    const [selectedEntityIds, setSelectedEntityIds] = useState<Set<string>>(new Set());
+
+    const toggleSelection = useCallback((id: string) => {
+        setSelectedEntityIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    }, []);
+
+    const clearSelection = useCallback(() => setSelectedEntityIds(new Set()), []);
+
+    // BATCH ACTIONS
+    const handleKickSelected = useCallback(async () => {
+        if (!selectedGroup || selectedEntityIds.size === 0) return;
+
+        const count = selectedEntityIds.size;
+        const confirmed = await confirm({
+            title: 'Confirm Batch Kick',
+            message: `Are you sure you want to KICK ${count} selected users?`,
+            confirmLabel: `Kick ${count} Users`,
+            variant: 'danger'
+        });
+
+        if (!confirmed) return;
+
+        addLog(`[BATCH] Starting kick for ${count} users...`, 'warn');
+        let successCount = 0;
+
+        for (const id of selectedEntityIds) {
+            try {
+                // Find display name for log
+                const name = entities.find(e => e.id === id)?.displayName || id;
+                await window.electron.instance.kickUser(selectedGroup.id, id);
+                addLog(`[BATCH] Kicked ${name}`, 'success');
+                setEntityStatus(id, 'kicked'); // Optimistic update
+                successCount++;
+                await new Promise(r => setTimeout(r, 200)); // Rate limit safety
+            } catch {
+                const name = entities.find(e => e.id === id)?.displayName || id;
+                addLog(`[BATCH] Failed to kick ${name}`, 'error');
+            }
+        }
+        clearSelection();
+    }, [selectedGroup, selectedEntityIds, confirm, addLog, setEntityStatus, entities]);
+
+    const handleInviteSelected = useCallback(async () => {
+        if (!effectiveGroup || selectedEntityIds.size === 0) return;
+
+        const count = selectedEntityIds.size;
+        addLog(`[BATCH] Sending invites to ${count} users...`, 'info');
+
+        for (const id of selectedEntityIds) {
+            const name = entities.find(e => e.id === id)?.displayName || id;
+            try {
+                await window.electron.instance.recruitUser(effectiveGroup.id, id);
+                addLog(`[BATCH] Invited ${name}`, 'success');
+                await new Promise(r => setTimeout(r, 200));
+            } catch {
+                addLog(`[BATCH] Failed to invite ${name}`, 'error');
+            }
+        }
+        clearSelection();
+    }, [effectiveGroup, selectedEntityIds, addLog, entities]);
 
     const handleRecruitAll = () => {
         console.log('[LiveView] handleRecruitAll clicked');
@@ -290,7 +495,7 @@ export const LiveView: React.FC = () => {
         }
 
         const targets = entities.filter(e => !e.isGroupMember && e.status === 'active');
-        
+
         if (targets.length === 0) {
             addLog(`[CMD] No strangers to recruit.`, 'warn');
             return;
@@ -390,7 +595,7 @@ export const LiveView: React.FC = () => {
             setProgress({ current: count + blocked.length, total: targets.length });
             await new Promise(r => setTimeout(r, speedDelay * 1000));
         }
-        
+
         addLog(`[CMD] Recruitment complete. Sent ${count} invites to ${effectiveGroup.name}.`, 'success');
 
         if (keywordRuleInvoked || blocked.length > 0) {
@@ -414,8 +619,8 @@ export const LiveView: React.FC = () => {
         try {
             const res = await window.electron.instance.getRallyTargets(selectedGroup.id);
             if (res.success && res.targets && res.targets.length > 0) {
-                 console.log('[LiveView] Opening rally operation dialog for', res.targets.length, 'targets');
-                 setOperationDialog({
+                console.log('[LiveView] Opening rally operation dialog for', res.targets.length, 'targets');
+                setOperationDialog({
                     isOpen: true,
                     type: 'rally',
                     title: 'Confirm Group Rally',
@@ -435,10 +640,10 @@ export const LiveView: React.FC = () => {
     const executeRally = async (speedDelay: number) => {
         setOperationDialog(prev => ({ ...prev, isOpen: false }));
         if (!selectedGroup) return;
-        
+
         addLog(`[CMD] Fetching rally targets...`, 'info');
         setIsLoading(true);
-        
+
         try {
             const res = await window.electron.instance.getRallyTargets(selectedGroup.id);
             setIsLoading(false);
@@ -450,7 +655,7 @@ export const LiveView: React.FC = () => {
 
             const targets = res.targets;
             addLog(`[CMD] RALLYING ${targets.length} GROUP MEMBERS...`, 'warn');
-            
+
             setProgress({ current: 0, total: targets.length });
             setProgressMode('rally');
 
@@ -482,167 +687,8 @@ export const LiveView: React.FC = () => {
             setProgressMode(null);
         }
     };
-    
-    const renderRecruitButton = () => {
-        if (progress && progressMode === 'recruit') {
-            const pct = Math.round((progress.current / progress.total) * 100);
-            
-            let statusText = `${progress.current}/${progress.total} PROCESSED`;
-            let statusColor = 'inherit';
-            
-            if (currentProcessingUser) {
-                const truncatedName = currentProcessingUser.name.length > 15 
-                    ? currentProcessingUser.name.substring(0, 15) + '...' 
-                    : currentProcessingUser.name;
-                    
-                if (currentProcessingUser.phase === 'checking') {
-                    statusText = `🔍 Checking: ${truncatedName}`;
-                    statusColor = '#fde047';
-                } else if (currentProcessingUser.phase === 'inviting') {
-                    statusText = `📨 Inviting: ${truncatedName}`;
-                    statusColor = '#86efac';
-                } else if (currentProcessingUser.phase === 'skipped') {
-                    statusText = `⛔ Skipped: ${truncatedName}`;
-                    statusColor = '#fca5a5';
-                }
-            }
-            
-            return (
-                <NeonButton 
-                    disabled
-                    style={{ flex: 1, height: '60px', flexDirection: 'column', gap: '4px', position: 'relative', overflow: 'hidden' }}
-                >
-                    <div style={{
-                        position: 'absolute', left: 0, top: 0, bottom: 0,
-                        width: `${pct}%`,
-                        background: 'rgba(var(--primary-hue), 100%, 50%, 0.3)',
-                        transition: 'width 0.2s linear'
-                    }} />
-                    <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>{pct}%</span>
-                        <span style={{ fontSize: '0.65rem', color: statusColor, fontWeight: 500 }}>{statusText}</span>
-                    </div>
-                </NeonButton>
-            );
-        }
 
-        // In roaming mode, disable if no group selected
-        const isDisabled = progress !== null || (isRoamingMode && !roamingSelectedGroup);
 
-        return (
-            <NeonButton
-                onClick={handleRecruitAll}
-                disabled={isDisabled}
-                style={{ flex: 1, height: '60px', flexDirection: 'column', gap: '4px' }}
-            >
-                <UserPlus size={20} />
-                <span style={{ fontSize: '0.75rem' }}>
-                    {isRoamingMode && roamingSelectedGroup
-                        ? `INVITE ALL TO ${roamingSelectedGroup.name.substring(0, 15).toUpperCase()}${roamingSelectedGroup.name.length > 15 ? '...' : ''}`
-                        : 'INVITE INSTANCE TO GROUP'
-                    }
-                </span>
-            </NeonButton>
-        );
-    };
-
-    const renderRallyButton = () => {
-        // In roaming mode, show a group selector dropdown instead of "GROUP OFF-LINE"
-        if (isRoamingMode) {
-            return (
-                <div style={{
-                    flex: 1,
-                    height: '60px',
-                    position: 'relative'
-                }}>
-                    <select
-                        value={roamingSelectedGroupId || ''}
-                        onChange={(e) => setRoamingSelectedGroupId(e.target.value || null)}
-                        style={{
-                            width: '100%',
-                            height: '100%',
-                            padding: '8px 12px',
-                            paddingRight: '32px',
-                            background: 'var(--color-surface-card)',
-                            border: '1px solid var(--border-color)',
-                            borderRadius: '12px',
-                            color: 'var(--color-text-main)',
-                            fontSize: '0.75rem',
-                            fontWeight: 600,
-                            cursor: 'pointer',
-                            appearance: 'none',
-                            textAlign: 'center',
-                        }}
-                    >
-                        <option value="">SELECT GROUP FOR INVITES</option>
-                        {myGroups.map(group => (
-                            <option key={group.id} value={group.id}>
-                                {group.name}
-                            </option>
-                        ))}
-                    </select>
-                    <ChevronDown
-                        size={16}
-                        style={{
-                            position: 'absolute',
-                            right: '12px',
-                            top: '50%',
-                            transform: 'translateY(-50%)',
-                            pointerEvents: 'none',
-                            color: 'var(--color-text-dim)'
-                        }}
-                    />
-                </div>
-            );
-        }
-
-        if (!selectedGroup) {
-            return (
-                <NeonButton
-                    disabled
-                    variant="secondary"
-                    style={{ flex: 1, height: '60px', flexDirection: 'column', gap: '4px', opacity: 0.5 }}
-                >
-                    <AppShieldIcon size={20} />
-                    <span style={{ fontSize: '0.75rem' }}>GROUP OFF-LINE</span>
-                </NeonButton>
-            );
-        }
-
-        if (progress && progressMode === 'rally') {
-            const pct = Math.round((progress.current / progress.total) * 100);
-            return (
-                <NeonButton
-                    disabled
-                    variant="secondary"
-                    style={{ flex: 1, height: '60px', flexDirection: 'column', gap: '4px', position: 'relative', overflow: 'hidden' }}
-                >
-                    <div style={{
-                        position: 'absolute', left: 0, top: 0, bottom: 0,
-                        width: `${pct}%`,
-                        background: 'rgba(255, 255, 255, 0.2)',
-                        transition: 'width 0.2s linear'
-                    }} />
-                    <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                        <span style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>{pct}%</span>
-                        <span style={{ fontSize: '0.65rem', opacity: 0.8 }}>{progress.current}/{progress.total} SENT</span>
-                    </div>
-                </NeonButton>
-            );
-        }
-
-        return (
-            <NeonButton
-                onClick={handleRally}
-                disabled={isLoading || progress !== null}
-                variant="secondary"
-                style={{ flex: 1, height: '60px', flexDirection: 'column', gap: '4px' }}
-            >
-                <AppShieldIcon size={20} />
-                <span style={{ fontSize: '0.75rem' }}>INVITE GROUP HERE</span>
-            </NeonButton>
-        );
-    };
 
     const handleLockdown = async () => {
         const confirmed = await confirm({
@@ -653,7 +699,7 @@ export const LiveView: React.FC = () => {
         });
 
         if (!confirmed) return;
-        
+
         addLog(`[CMD] INITIATING INSTANCE LOCKDOWN...`, 'warn');
         try {
             const res = await window.electron.instance.closeInstance();
@@ -686,18 +732,30 @@ export const LiveView: React.FC = () => {
     // PERF FIX: Prevents recalculating on every render
     const { activeCount, leftCount, activeEntities, leftEntities } = useMemo(() => {
         const active = entities.filter(e => e.status === 'active' || e.status === 'joining');
-        const left = entities.filter(e => e.status === 'left' || e.status === 'kicked');
+
+        // Use persistent list for 'left' if available and we are in an instance
+        // Sort by time: newest to leave first
+        const left = (persistentLeftEntities.length > 0
+            ? persistentLeftEntities
+            : entities.filter(e => e.status === 'left' || e.status === 'kicked'))
+            .slice()
+            .sort((a, b) => {
+                const timeA = (a as any).leftAt ? new Date((a as any).leftAt).getTime() : (a.lastUpdated || 0);
+                const timeB = (b as any).leftAt ? new Date((b as any).leftAt).getTime() : (b.lastUpdated || 0);
+                return (timeB || 0) - (timeA || 0);
+            });
+
         return {
             activeCount: active.length,
             leftCount: left.length,
             activeEntities: active,
             leftEntities: left
         };
-    }, [entities]);
+    }, [entities, persistentLeftEntities]);
 
     return (
         <>
-            <motion.div 
+            <motion.div
                 className={styles.container}
                 variants={containerVariants}
                 initial="hidden"
@@ -706,54 +764,82 @@ export const LiveView: React.FC = () => {
             >
                 {/* Header Panel */}
                 <GlassPanel className={styles.headerPanel}>
-                    {instanceInfo?.imageUrl && (
-                        <div 
-                            className={styles.headerBackground} 
-                            style={{ backgroundImage: `url(${instanceInfo.imageUrl})` }} 
+                    {instanceInfo?.imageUrl && !headerImgError && !isInitialLoad && (
+                        <div
+                            className={styles.headerBackground}
+                            style={{ backgroundImage: `url(${instanceInfo.imageUrl})` }}
                         />
                     )}
-                    
+
                     <div className={styles.titleSection}>
                         <div className={styles.instanceIcon}>
-                            {instanceInfo?.imageUrl ? (
-                                <img src={instanceInfo.imageUrl} className={styles.instanceImage} alt="" />
+                            {isInitialLoad ? (
+                                <Skeleton variant="circle" width={40} height={40} />
+                            ) : instanceInfo?.imageUrl && !headerImgError ? (
+                                <img
+                                    src={instanceInfo.imageUrl}
+                                    className={styles.instanceImage}
+                                    alt=""
+                                    onError={() => setHeaderImgError(true)}
+                                />
                             ) : (
                                 <Radio className="text-primary" size={24} />
                             )}
-                            {scanActive && <div className={styles.scanPulse} />}
+                            {scanActive && !isInitialLoad && <div className={styles.scanPulse} />}
                         </div>
                         <div>
-                            <h1 className={`${styles.title} text-gradient`}>
-                                {instanceInfo?.name || currentWorldName || 'CURRENT INSTANCE'}
-                            </h1>
-                            <div className={styles.subtitle}>
-                                {isRoamingMode ? 'ROAMING MODE - PASSIVE MONITORING' : 'LIVE SECTOR SCAN'}
-                            </div>
+                            {isInitialLoad ? (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                                    <Skeleton width={200} height={24} />
+                                    <Skeleton width={150} height={14} />
+                                </div>
+                            ) : (
+                                <>
+                                    <h1 className={`${styles.title} text-gradient`}>
+                                        {instanceInfo?.name || currentWorldName || 'CURRENT INSTANCE'}
+                                    </h1>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                                        <div className={styles.subtitle}>
+                                            {isRoamingMode ? 'ROAMING MODE - PASSIVE MONITORING' : 'LIVE SECTOR SCAN'}
+                                        </div>
+                                    </div>
+                                </>
+                            )}
                         </div>
                     </div>
 
                     <div className={styles.statsGrid}>
-                        <StatTile 
-                            label="ACTIVE"
-                            value={activeCount}
-                            color="var(--color-success)"
-                        />
-                        <StatTile 
-                            label="HISTORY"
-                            value={leftCount}
-                            color="var(--color-text-dim)"
-                        />
-                        <StatTile 
-                            label="STATUS"
-                            value={scanActive ? "SCANNING" : "IDLE"}
-                            color={scanActive ? "var(--color-primary)" : "var(--color-text-dim)"}
-                        />
+                        {isInitialLoad ? (
+                            <>
+                                <Skeleton width={100} height={60} style={{ borderRadius: '12px' }} />
+                                <Skeleton width={100} height={60} style={{ borderRadius: '12px' }} />
+                                <Skeleton width={100} height={60} style={{ borderRadius: '12px' }} />
+                            </>
+                        ) : (
+                            <>
+                                <StatTile
+                                    label="ACTIVE"
+                                    value={activeCount}
+                                    color="var(--color-success)"
+                                />
+                                <StatTile
+                                    label="HISTORY"
+                                    value={leftCount}
+                                    color="var(--color-text-dim)"
+                                />
+                                <StatTile
+                                    label="STATUS"
+                                    value={scanActive ? "SCANNING" : "IDLE"}
+                                    color={scanActive ? "var(--color-primary)" : "var(--color-text-dim)"}
+                                />
+                            </>
+                        )}
                     </div>
                 </GlassPanel>
 
                 {/* Main Content Split */}
                 <div style={{ display: 'flex', gap: '1rem', flex: 1, minHeight: 0 }}>
-                    
+
                     {/* Left: Entity List (2/3 width) */}
                     <GlassPanel style={{ flex: 2, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 0 }}>
                         {/* Tab Header */}
@@ -768,7 +854,7 @@ export const LiveView: React.FC = () => {
                                     {activeCount}
                                 </span>
                             </button>
-                            
+
                             <button
                                 onClick={() => setEntityTab('left')}
                                 className={`${styles.entityTab} ${entityTab === 'left' ? styles.entityTabLeft : ''}`}
@@ -779,7 +865,7 @@ export const LiveView: React.FC = () => {
                                     {leftCount}
                                 </span>
                             </button>
-                            
+
                             <div style={{ width: '1px', background: 'var(--border-color)', margin: '5px 0' }} />
 
                             <button
@@ -812,9 +898,23 @@ export const LiveView: React.FC = () => {
                                         exit={{ opacity: 0, x: 10 }}
                                         transition={{ duration: 0.15 }}
                                     >
-                                        {activeCount === 0 ? (
+                                        {isInitialLoad ? (
+                                            /* Skeleton Loader List */
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                                {Array.from({ length: 5 }).map((_, i) => (
+                                                    <div key={i} style={{ display: 'flex', gap: '12px', padding: '12px', background: 'var(--color-surface-card)', borderRadius: '8px', alignItems: 'center' }}>
+                                                        <Skeleton variant="circle" width={36} height={36} />
+                                                        <div style={{ flex: 1 }}>
+                                                            <Skeleton width="40%" height={16} style={{ marginBottom: '6px' }} />
+                                                            <Skeleton width="30%" height={12} />
+                                                        </div>
+                                                        <Skeleton width={80} height={24} style={{ borderRadius: '6px' }} />
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : activeCount === 0 ? (
                                             <div className={styles.emptyState}>
-                                                No active entities.<br/>
+                                                No active entities.<br />
                                                 <span style={{ fontSize: '0.8rem' }}>(Instance is empty)</span>
                                             </div>
                                         ) : (
@@ -830,8 +930,11 @@ export const LiveView: React.FC = () => {
                                                         onInvite={handleRecruit}
                                                         onKick={handleKick}
                                                         onBan={handleBanClick}
-                                                        onReport={handleReportClick}
+                                                        onAddFlag={handleFlagClick}
                                                         readOnly={isRoamingMode && !roamingSelectedGroup}
+                                                        isSelected={selectedEntityIds.has(entity.id)}
+                                                        selectionMode={true}
+                                                        onToggleSelect={toggleSelection}
                                                     />
                                                 </motion.div>
                                             ))
@@ -857,12 +960,12 @@ export const LiveView: React.FC = () => {
                                                     animate={{ opacity: 0.6 }}
                                                     exit={{ opacity: 0 }}
                                                 >
-                                                    <EntityCard 
-                                                        entity={entity} 
-                                                        onInvite={() => {}} 
-                                                        onKick={() => {}}
+                                                    <EntityCard
+                                                        entity={entity}
+                                                        onInvite={() => { }}
+                                                        onKick={() => { }}
                                                         onBan={handleBanClick}
-                                                        onReport={handleReportClick}
+                                                        onAddFlag={handleFlagClick}
                                                         readOnly={true}
                                                     />
                                                 </motion.div>
@@ -876,146 +979,218 @@ export const LiveView: React.FC = () => {
 
                     {/* Right: Actions & Logs (1/3 width) */}
                     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem', minWidth: '280px' }}>
-                        
+
+                        {/* Right Panel Tabs */}
+                        <div style={{ display: 'flex', background: 'var(--color-surface-card)', borderRadius: '8px', padding: '4px', border: '1px solid var(--border-color)' }}>
+                            <button
+                                onClick={() => setRightTab('controls')}
+                                style={{
+                                    flex: 1,
+                                    padding: '6px',
+                                    borderRadius: '6px',
+                                    background: rightTab === 'controls' ? 'var(--color-primary)' : 'transparent',
+                                    color: rightTab === 'controls' ? 'white' : 'var(--color-text-dim)',
+                                    border: 'none',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s'
+                                }}
+                            >
+                                CONTROLS
+                            </button>
+                            <button
+                                onClick={() => setRightTab('telemetry')}
+                                style={{
+                                    flex: 1,
+                                    padding: '6px',
+                                    borderRadius: '6px',
+                                    background: rightTab === 'telemetry' ? 'var(--color-primary)' : 'transparent',
+                                    color: rightTab === 'telemetry' ? 'white' : 'var(--color-text-dim)',
+                                    border: 'none',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 600,
+                                    cursor: 'pointer',
+                                    transition: 'all 0.2s'
+                                }}
+                            >
+                                TELEMETRY
+                            </button>
+                        </div>
+
                         {/* Actions Panel */}
-                        <GlassPanel style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                            <h3 className={styles.actionsHeader}>
-                                <Crosshair size={16} />
-                                {isRoamingMode ? 'ROAMING CONTROLS' : 'INSTANCE ACTIONS'}
-                            </h3>
+                        <div style={{ display: rightTab === 'controls' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
+                            <GlassPanel style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', position: 'relative', zIndex: 10, overflow: 'visible', flexShrink: 0 }}>
+                                <h3 className={styles.actionsHeader}>
+                                    <Crosshair size={16} />
+                                    {isRoamingMode ? 'ROAMING CONTROLS' : 'INSTANCE ACTIONS'}
+                                </h3>
 
-                            <OscAnnouncementWidget />
+                                <OscAnnouncementWidget />
 
-                            {/* Alerts Toggle */}
-                            <div className={styles.toggleRow} style={{ marginBottom: 0 }}>
-                                <div className={styles.toggleItem}>
-                                    <div className={styles.toggleLabel}>
-                                        <ShieldAlert size={16} color={useAutoModAlertStore(s => s.isEnabled) ? '#f87171' : 'gray'} />
-                                        <span>Alerts</span>
-                                    </div>
-                                    <ToggleButton
-                                        enabled={useAutoModAlertStore(s => s.isEnabled)}
-                                        onToggle={useAutoModAlertStore(s => s.toggleEnabled)}
-                                    />
-                                </div>
-                            </div>
-
-                            {/* Custom Invite Message */}
-                            {!isRoamingMode && (
-                                <div>
-                                    <input
-                                        type="text"
-                                        placeholder="Custom Invite Message (Optional)..."
-                                        value={customMessage}
-                                        onChange={(e) => setCustomMessage(e.target.value)}
-                                        className={styles.messageInput}
-                                    />
-                                    {customMessage && (
-                                        <div className={styles.messageWarning}>
-                                            Warning: Overwrites Invite Slot 12
+                                {/* Alerts Toggle */}
+                                <div className={styles.toggleRow} style={{ marginBottom: 0 }}>
+                                    <div className={styles.toggleItem}>
+                                        <div className={styles.toggleLabel}>
+                                            <ShieldAlert size={16} color={useAutoModAlertStore(s => s.isEnabled) ? '#f87171' : 'gray'} />
+                                            <span>Alerts</span>
                                         </div>
-                                    )}
+                                        <ToggleButton
+                                            enabled={useAutoModAlertStore(s => s.isEnabled)}
+                                            onToggle={useAutoModAlertStore(s => s.toggleEnabled)}
+                                        />
+                                    </div>
                                 </div>
-                            )}
 
-                            {/* Invite Rate Limit Slider REMOVED - Moved to Contextual Dialog */}
+                                {/* Custom Invite Message */}
+                                {!isRoamingMode && (
+                                    <div>
+                                        <input
+                                            type="text"
+                                            placeholder="Custom Invite Message (Optional)..."
+                                            value={customMessage}
+                                            onChange={(e) => setCustomMessage(e.target.value)}
+                                            className={styles.messageInput}
+                                        />
+                                        {customMessage && (
+                                            <div className={styles.messageWarning}>
+                                                Warning: Overwrites Invite Slot 12
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
 
-                            <div style={{ display: 'flex', gap: '10px' }}>
-                                {renderRecruitButton()}
-                                {renderRallyButton()}
-                            </div>
+                                <LiveToolbar
+                                    selectedCount={selectedEntityIds.size}
+                                    onClearSelection={clearSelection}
+                                    onKickSelected={handleKickSelected}
+                                    onInviteSelected={handleInviteSelected}
+                                    onRally={handleRally}
+                                    onRecruitAll={handleRecruitAll}
+                                    onLockdown={handleLockdown}
+                                    isRoaming={isRoamingMode}
+                                    hasGroupSelected={!!effectiveGroup}
+                                    isRallying={progressMode === 'rally'}
+                                    isRecruiting={progressMode === 'recruit'}
+                                    progress={progress ? Math.round((progress.current / progress.total) * 100) : null}
+                                    statusText={currentProcessingUser
+                                        ? `${currentProcessingUser.phase === 'inviting' ? '📨' : currentProcessingUser.phase === 'skipped' ? '⛔' : '🔍'} ${currentProcessingUser.name}`
+                                        : undefined
+                                    }
+                                    roamingGroups={myGroups}
+                                    selectedRoamingGroupId={roamingSelectedGroupId}
+                                    onSelectRoamingGroup={setRoamingSelectedGroupId}
+                                    isLoading={isLoading}
+                                />
+                            </GlassPanel>
 
-                            {/* Mass Invite Friends Button */}
+                            {/* Instance Health Card */}
+                            <GlassPanel style={{ marginTop: '10px', padding: '0', flexShrink: 0 }}>
+                                <InstanceHealthWidget
+                                    style={{
+                                        background: 'transparent',
+                                        border: 'none',
+                                        justifyContent: 'space-around',
+                                        width: '100%',
+                                        flexWrap: 'wrap',
+                                        rowGap: '8px'
+                                    }}
+                                />
+                            </GlassPanel>
+
+                            {/* Live Player Chart */}
+                            <GlassPanel style={{ marginTop: '10px', padding: '0', flex: 1, minHeight: '150px', display: 'flex', flexDirection: 'column' }}>
+                                <LivePlayerChart style={{ flex: 1, width: '100%' }} />
+                            </GlassPanel>
+
                             {!isRoamingMode && selectedGroup && (
-                                <NeonButton 
-                                    variant="secondary" 
-                                    style={{ height: '50px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
-                                    onClick={() => setShowMassInvite(true)}
-                                    disabled={progress !== null}
-                                >
-                                    <span>📨</span> MASS INVITE FRIENDS
-                                </NeonButton>
+                                <GlassPanel style={{ marginTop: '10px', padding: '10px' }}>
+                                    <NeonButton
+                                        variant="secondary"
+                                        style={{ height: '50px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', marginTop: '10px' }}
+                                        onClick={() => setShowMassInvite(true)}
+                                        disabled={progress !== null}
+                                    >
+                                        <span>📨</span> MASS INVITE FRIENDS
+                                    </NeonButton>
+                                </GlassPanel>
                             )}
-                            
-                            {!isRoamingMode && selectedGroup && (
-                                <NeonButton 
-                                    variant="danger" 
-                                    style={{ height: '40px', fontSize: '0.75rem', marginTop: '0.5rem', opacity: 0.8 }}
-                                    onClick={handleLockdown}
-                                >
-                                    <ShieldAlert size={16} />
-                                    EMERGENCY LOCKDOWN
-                                </NeonButton>
-                            )}
-                        </GlassPanel>
+                        </div>
 
                         {/* Log Terminal */}
-                        <GlassPanel className={styles.logTerminal}>
-                            <div className={styles.logHeader}>
-                                <Activity size={14} />
-                                LIVE TELEMETRY
-                            </div>
-                            
-                            <div className={styles.logContent}>
-                                {logs.slice().reverse().map(log => (
-                                    <div 
-                                        key={log.id} 
-                                        className={`${styles.logEntry} ${
-                                            log.type === 'error' ? styles.logEntryError : 
-                                            log.type === 'warn' ? styles.logEntryWarn : 
-                                            log.type === 'success' ? styles.logEntrySuccess : ''
-                                        }`}
-                                    >
-                                        {log.message}
-                                    </div>
-                                ))}
-                            </div>
-                        </GlassPanel>
+                        <div style={{ display: rightTab === 'telemetry' ? 'flex' : 'none', flex: 1, minHeight: '400px' }}>
+                            <GlassPanel className={styles.logTerminal}>
+                                <div className={styles.logHeader}>
+                                    <Activity size={14} />
+                                    LIVE TELEMETRY
+                                </div>
+
+                                <div className={styles.logContent}>
+                                    {logs.slice().reverse().map(log => (
+                                        <div
+                                            key={log.id}
+                                            className={`${styles.logEntry} ${log.type === 'error' ? styles.logEntryError :
+                                                log.type === 'warn' ? styles.logEntryWarn :
+                                                    log.type === 'success' ? styles.logEntrySuccess : ''
+                                                }`}
+                                        >
+                                            {log.message}
+                                        </div>
+                                    ))}
+                                </div>
+                            </GlassPanel>
+                        </div>
                     </div>
                 </div>
             </motion.div>
 
             {/* Dialogs */}
             <AnimatePresence>
-                {banDialogUser && selectedGroup && (
-                    <BanUserDialog 
-                        key={banDialogUser ? banDialogUser.id : 'closed'}
-                        isOpen={!!banDialogUser} 
-                        onClose={() => setBanUserDialog(null)}
-                        user={banDialogUser}
-                        initialGroupId={selectedGroup?.id}
-                    />
-                )}
-                
-                {recruitResults && selectedGroup && (
-                    <RecruitResultsDialog 
-                        isOpen={!!recruitResults}
-                        onClose={() => setRecruitResults(null)}
-                        blockedUsers={recruitResults?.blocked || []}
-                        totalInvited={recruitResults?.invited || 0}
-                    />
-                )}
-                
-                {showMassInvite && selectedGroup && (
-                    <MassInviteDialog 
-                        isOpen={showMassInvite}
-                        onClose={() => setShowMassInvite(false)}
-                    />
-                )}
+                {
+                    banDialogUser && selectedGroup && (
+                        <BanUserDialog
+                            key={banDialogUser ? banDialogUser.id : 'closed'}
+                            isOpen={!!banDialogUser}
+                            onClose={() => setBanUserDialog(null)}
+                            user={banDialogUser}
+                            initialGroupId={selectedGroup?.id}
+                        />
+                    )
+                }
+
+                {
+                    recruitResults && selectedGroup && (
+                        <RecruitResultsDialog
+                            isOpen={!!recruitResults}
+                            onClose={() => setRecruitResults(null)}
+                            blockedUsers={recruitResults?.blocked || []}
+                            totalInvited={recruitResults?.invited || 0}
+                        />
+                    )
+                }
+
+                {
+                    showMassInvite && selectedGroup && (
+                        <MassInviteDialog
+                            isOpen={showMassInvite}
+                            onClose={() => setShowMassInvite(false)}
+                        />
+                    )
+                }
             </AnimatePresence>
 
             {/* AutoMod Alert Overlay */}
             <AutoModAlertOverlay />
-            
-            {/* Report Generator Dialog */}
-            <ReportGeneratorDialog
-                isOpen={!!reportContext}
-                onClose={() => setReportContext(null)}
-                context={reportContext}
+
+            {/* Add Flag Dialog */}
+            <AddFlagDialog
+                isOpen={!!flagDialogUser}
+                onClose={() => setFlagDialogUser(null)}
+                user={flagDialogUser}
             />
 
             {/* Operation Start Dialog */}
-            <OperationStartDialog 
+            <OperationStartDialog
                 isOpen={operationDialog.isOpen}
                 onClose={() => setOperationDialog(prev => ({ ...prev, isOpen: false }))}
                 onConfirm={(speed) => {

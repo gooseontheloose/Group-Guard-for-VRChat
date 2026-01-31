@@ -34,6 +34,8 @@ import { getVRChatClient } from './AuthService';
 import Store from 'electron-store';
 import { LRUCache } from 'lru-cache';
 
+import { TokenBucket } from './NetworkService';
+
 const logger = log.scope('GroupAuthorization');
 
 // Moderation permission strings that indicate mod powers
@@ -58,6 +60,7 @@ interface GroupMembershipData {
     roleIds?: string[];
     myMember?: { permissions?: string[]; roleIds?: string[] };
     group?: { ownerId?: string; name?: string };
+    lastVerifiedAt?: number; // timestamp of last successful mod check
     [key: string]: unknown;
 }
 
@@ -78,6 +81,9 @@ class GroupAuthorizationService {
         max: 200,
         ttl: 1000 * 60 * 60 * 24 // 24 hour TTL for roles
     });
+
+    // Rate Limiter: 60 requests burst, 1 request/sec refill (60 request/min sustained)
+    private tokenBucket = new TokenBucket(60, 1);
 
     // Flag to track if permissions have been initialized
     private initialized: boolean = false;
@@ -172,6 +178,11 @@ class GroupAuthorizationService {
         for (const g of groups) {
             const id = g?.id || g?.groupId;
             if (id && id.startsWith('grp_')) {
+                // Ensure we don't lose the lastVerifiedAt if the new object doesn't have it (shouldn't happen with our logic, but safe)
+                const existing = this.cachedGroupObjects.get(id);
+                if (existing?.lastVerifiedAt && !g.lastVerifiedAt) {
+                    g.lastVerifiedAt = existing.lastVerifiedAt;
+                }
                 this.cachedGroupObjects.set(id, g);
             }
         }
@@ -207,15 +218,24 @@ class GroupAuthorizationService {
         const ownerGroups: GroupMembershipData[] = [];
         const needsPermCheck: GroupMembershipData[] = [];
 
+        // Hydrate lastVerifiedAt from cache into the fresh API data
+        // This ensures we can use the cache even if VRChat returned a fresh (but blank) object
         for (const g of groups) {
             const groupId = g.groupId || g.id;
             if (!groupId || !groupId.startsWith('grp_')) {
                 continue;
             }
 
+            // Restore verification timestamp from memory/disk cache if present
+            const cachedParams = this.cachedGroupObjects.get(groupId);
+            if (cachedParams && cachedParams.lastVerifiedAt) {
+                g.lastVerifiedAt = cachedParams.lastVerifiedAt;
+            }
+
             // Check if user is owner - no API call needed
             const isOwner = g.ownerId === userId || g.group?.ownerId === userId;
             if (isOwner) {
+                g.lastVerifiedAt = Date.now(); // Owner is always verified
                 ownerGroups.push(g);
             } else {
                 needsPermCheck.push(g);
@@ -226,69 +246,49 @@ class GroupAuthorizationService {
         moderatableGroups.push(...ownerGroups);
         logger.info(`[SECURITY] Found ${ownerGroups.length} owner groups (no API needed), ${needsPermCheck.length} need permission check`);
 
-        // RATE LIMIT MITIGATION: Strict Serial Priority Queue
-        // VRChat API is aggressive with rate limits on role fetching.
-        // We must process one by one with a delay to avoid 429s.
+        // RATE LIMIT MITIGATION: Token Bucket + Concurrency
+        // We substitute the old "Fast Lane" / "Slow Lane" with a dynamic token bucket.
+        // This allows bursts (fast startup) while enforcing long-term safety.
 
-        // 1. Process Priority Groups (User is Owner - Cached or simple check) which we already did above.
-        // 2. Process High Priority Groups (First 3 in the list - "Fast Lane")
-        const FAST_LANE_COUNT = 3;
-        const fastLane = needsPermCheck.slice(0, FAST_LANE_COUNT);
-        const slowLane = needsPermCheck.slice(FAST_LANE_COUNT);
+        const BATCH_SIZE = 5; // Concurrency limit
+        let processedCount = 0;
 
-        logger.info(`[SECURITY] Queue: ${fastLane.length} fast lane, ${slowLane.length} slow lane`);
+        // Helper to process a single group
+        const processGroup = async (g: GroupMembershipData) => {
+            const groupId = g.groupId || g.id;
+            try {
+                if (this.currentProcessId !== processId) return; // Cancel check
 
-        // Fast Lane Loop (Short delay)
-        for (const g of fastLane) {
+                // Check Mod Perms (HANDLE OPTIMISTIC AUTH INTERNALLY)
+                const hasMod = await this.checkModPermissions(groupId!, userId, g);
+
+                if (hasMod) {
+                    moderatableGroups.push(g);
+                    this.emitGroupVerified(g);
+                    logger.info(`[SECURITY] Checked ${groupId}: VERIFIED ✅`);
+                } else {
+                    // logger.debug(`[SECURITY] Checked ${groupId}: No Mod Perms ❌`);
+                }
+            } catch (e) {
+                logger.error(`[SECURITY] Error checking permissions for ${groupId}:`, e);
+            } finally {
+                processedCount++;
+                if (processedCount % 10 === 0) {
+                    logger.info(`[SECURITY] Processed ${processedCount}/${needsPermCheck.length} groups...`);
+                }
+            }
+        };
+
+        // Process in batches to control concurrency
+        for (let i = 0; i < needsPermCheck.length; i += BATCH_SIZE) {
             // Check for cancellation
             if (this.currentProcessId !== processId) {
                 logger.info(`[SECURITY] Process ${processId} cancelled by newer request`);
-                return moderatableGroups;
-            }
-
-            const groupId = g.groupId || g.id;
-            try {
-                const hasMod = await this.checkModPermissions(groupId!, userId, g);
-                if (hasMod) {
-                    moderatableGroups.push(g);
-                    this.emitGroupVerified(g);
-                }
-            } catch (e) {
-                logger.error(`[SECURITY] Error checking permissions for ${groupId}:`, e);
-            }
-            await this.delay(500); // 500ms for fast lane
-        }
-
-        // Slow Lane Loop (Tortoise Mode - 2s delay)
-        // This takes a long time (e.g. 150 groups * 2s = 5 mins)
-        // But granular updates keep the UI alive.
-        for (let i = 0; i < slowLane.length; i++) {
-            // Check for cancellation
-            if (this.currentProcessId !== processId) {
-                logger.info(`[SECURITY] Process ${processId} cancelled by newer request (during slow lane)`);
                 break;
             }
 
-            const g = slowLane[i];
-            const groupId = g.groupId || g.id;
-
-            try {
-                const hasMod = await this.checkModPermissions(groupId!, userId, g);
-                if (hasMod) {
-                    moderatableGroups.push(g);
-                    this.emitGroupVerified(g);
-                    logger.info(`[SECURITY] Checked ${groupId} (${i + 1}/${slowLane.length}): VERIFIED ✅`);
-                } else {
-                    logger.info(`[SECURITY] Checked ${groupId} (${i + 1}/${slowLane.length}): No Mod Perms ❌`);
-                }
-            } catch (e) {
-                logger.error(`[SECURITY] Error checking permissions for ${groupId}:`, e);
-            }
-
-            // 5.5s delay between requests to appease the rate limit gods
-            if (i < slowLane.length - 1) {
-                await this.delay(5500);
-            }
+            const batch = needsPermCheck.slice(i, i + BATCH_SIZE);
+            await Promise.all(batch.map(g => processGroup(g)));
         }
 
 
@@ -312,7 +312,8 @@ class GroupAuthorizationService {
                     shortCode: innerGroup.shortCode || groupObj.shortCode || '',
                     discriminator: innerGroup.discriminator || groupObj.discriminator,
                     onlineMemberCount: innerGroup.onlineMemberCount ?? groupObj.onlineMemberCount,
-                    activeInstanceCount: innerGroup.activeInstanceCount ?? groupObj.activeInstanceCount
+                    activeInstanceCount: innerGroup.activeInstanceCount ?? groupObj.activeInstanceCount,
+                    lastVerifiedAt: g.lastVerifiedAt // Ensure timestamp persists
                 };
             }
             return g;
@@ -338,8 +339,20 @@ class GroupAuthorizationService {
 
     /**
      * Check if a user has moderation permissions in a group by checking their roles.
+     * IMPLEMNETS OPTIMISTIC AUTH: Trusts checks < 24h old.
      */
     private async checkModPermissions(groupId: string, userId: string, membership: GroupMembershipData): Promise<boolean> {
+        // --- OPTIMISTIC AUTH CHECK ---
+        const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+        if (membership.lastVerifiedAt && (Date.now() - membership.lastVerifiedAt < ONE_DAY_MS)) {
+            // logger.debug(`[SECURITY] Optimistic Auth for ${groupId}: Access Granted (Verified ${(Date.now() - membership.lastVerifiedAt) / 1000 / 60}m ago)`);
+            return true;
+        }
+        // -----------------------------
+
+        // If we need to fetch, consume a token (Rate Limit)
+        await this.tokenBucket.consume(1);
+
         const client = getVRChatClient();
         if (!client) return false;
 
@@ -385,6 +398,8 @@ class GroupAuthorizationService {
                     MODERATION_PERMISSIONS.includes(p)
                 );
                 if (hasModPerm) {
+                    // Update verification timestamp on success
+                    membership.lastVerifiedAt = Date.now();
                     return true;
                 }
             }

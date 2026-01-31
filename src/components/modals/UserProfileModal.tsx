@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Modal } from '../ui/Modal';
-import { User, Shield, Globe, Users, Clock, BadgeCheck, Crown, Copy, Check, Loader2, History, MapPin, Edit3, Save } from 'lucide-react';
+import { User, Shield, Globe, Users, Clock, BadgeCheck, Crown, Copy, Check, Loader2, History, MapPin, Edit3, Tag } from 'lucide-react';
 import styles from '../../features/dashboard/dialogs/UserProfileDialog.module.css';
+import { PlayerFlags } from '../ui/PlayerFlags';
 
 interface UserProfileModalProps {
     userId: string;
@@ -86,6 +87,25 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
         };
 
         loadData();
+
+        // Listen for real-time stats updates
+        const removeListener = window.electron.friendship.onStatsUpdate((data) => {
+            if (data.userIds.includes(userId)) {
+                setStats(prev => {
+                    if (!prev) return null;
+                    return {
+                        ...prev,
+                        timeSpent: prev.timeSpent + (data.addedMinutes * 60 * 1000),
+                        // Optionally update lastSeen
+                        lastSeen: new Date().toISOString()
+                    };
+                });
+            }
+        });
+
+        return () => {
+            removeListener();
+        };
     }, [userId]);
 
     // Update note state when profile loads
@@ -125,16 +145,14 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
     };
 
     const getTrustColor = (trustLevel: string) => {
-        const colors: Record<string, string> = {
-            'Visitor': '#cccccc',
-            'User': '#1778ff',
-            'Known': '#2bcf5c',
-            'Trusted': '#ff7b42',
-            'Veteran': '#8b2cdb',
-            'Legend': '#ffd700',
-            'Unknown': '#666666'
-        };
-        return colors[trustLevel] || '#666666';
+        const r = (trustLevel || '').toLowerCase();
+        if (r.includes('trusted') || r.includes('veteran')) return '#8b2cdb'; // Purple
+        if (r.includes('known')) return '#ff7b42';   // Orange
+        if (r.includes('user')) return '#2bcf5c';    // Green
+        if (r.includes('new')) return '#1778ff';     // Blue
+        if (r.includes('visitor')) return '#cccccc'; // Gray
+        if (r.includes('legend')) return '#ffd700';  // Gold
+        return '#666666';
     };
 
     const formatDate = (dateString: string) => {
@@ -217,13 +235,37 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                             </div>
                         </div>
 
+                        {/* Player Flags Card */}
+                        <div className={styles.card}>
+                            <div className={styles.cardHeader}>
+                                <Tag size={16} />
+                                Flag Selection
+                            </div>
+                            <div className={styles.cardContent}>
+                                <PlayerFlags userId={userId} />
+                            </div>
+                        </div>
+
                         {/* Personal Note Card */}
                         <div className={styles.card}>
                             <div className={styles.cardHeader}>
                                 <Edit3 size={16} />
                                 Personal Note
+                                <div className={`${styles.saveStatus} ${noteSaved ? styles.saved : ''}`} style={{ marginLeft: 'auto', marginRight: '4px' }}>
+                                    {isSavingNote ? (
+                                        <>
+                                            <Loader2 size={12} className={styles.spin} />
+                                            <span>Saving...</span>
+                                        </>
+                                    ) : noteSaved ? (
+                                        <>
+                                            <Check size={12} />
+                                            <span>Saved</span>
+                                        </>
+                                    ) : null}
+                                </div>
                             </div>
-                            <div className={styles.cardContent} style={{ padding: 0 }}>
+                            <div className={styles.cardContent}>
                                 <textarea
                                     className={styles.noteInput}
                                     value={note}
@@ -231,23 +273,6 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                                     placeholder="Add a private note about this player..."
                                     spellCheck={false}
                                 />
-                                <div className={styles.noteFooter}>
-                                    <div className={`${styles.saveStatus} ${noteSaved ? styles.saved : ''}`}>
-                                        {isSavingNote ? (
-                                            <>
-                                                <Loader2 size={12} className={styles.spin} />
-                                                <span>Saving...</span>
-                                            </>
-                                        ) : noteSaved ? (
-                                            <>
-                                                <Check size={12} />
-                                                <span>Saved</span>
-                                            </>
-                                        ) : (
-                                            <span style={{ opacity: 0 }}>.</span>
-                                        )}
-                                    </div>
-                                </div>
                             </div>
                         </div>
 
@@ -378,12 +403,22 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({
                                 <div className={styles.cardContent}>
                                     <div className={styles.mutualStats}>
                                         <div className={styles.mutualStat}>
-                                            <span className={styles.mutualCount}>{profileData.mutualCounts.friends}</span>
-                                            <span className={styles.mutualLabel}>Friends</span>
+                                            <div className={styles.mutualIconWrapper} style={{ color: 'var(--color-primary)' }}>
+                                                <User size={20} />
+                                            </div>
+                                            <div className={styles.mutualData}>
+                                                <span className={styles.mutualCount}>{profileData.mutualCounts.friends}</span>
+                                                <span className={styles.mutualLabel}>Mutual Friends</span>
+                                            </div>
                                         </div>
                                         <div className={styles.mutualStat}>
-                                            <span className={styles.mutualCount}>{profileData.mutualCounts.groups}</span>
-                                            <span className={styles.mutualLabel}>Groups</span>
+                                            <div className={styles.mutualIconWrapper} style={{ color: 'var(--color-accent)' }}>
+                                                <Users size={20} />
+                                            </div>
+                                            <div className={styles.mutualData}>
+                                                <span className={styles.mutualCount}>{profileData.mutualCounts.groups}</span>
+                                                <span className={styles.mutualLabel}>Mutual Groups</span>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>

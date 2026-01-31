@@ -1,10 +1,33 @@
 import { contextBridge, ipcRenderer } from 'electron';
+import type {
+    VRChatGroup,
+    GroupMember,
+    PipelineEvent,
+    AutoModRule,
+    InstanceGuardEvent,
+    LiveEntity,
+    ScannedUser,
+    AutoModUserInput,
+    GameLogEntry,
+    FriendLocation,
+    SocialFeedEntry,
+    PlayerLogEntry,
+    RelationshipEvent,
+    OscConfig,
+    WatchedEntity,
+    ModerationTag,
+    GroupAnnouncementConfig,
+    AppSettings,
+    VRChatUser,
+    ScanResult
+} from '../src/types/electron';
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electron', {
     log: (level: string, message: string) => ipcRenderer.send('log', level, message),
     getVersion: () => process.versions.electron,
+    openExternal: (url: string) => ipcRenderer.invoke('app:open-external', url),
 
     // Auth API
     login: (credentials: { username: string; password: string; rememberMe?: boolean }) =>
@@ -21,14 +44,15 @@ contextBridge.exposeInMainWorld('electron', {
     getMyGroups: () => ipcRenderer.invoke('groups:get-my-groups'),
     getGroupDetails: (groupId: string) => ipcRenderer.invoke('groups:get-details', { groupId }),
     getGroupPublicDetails: (groupId: string) => ipcRenderer.invoke('groups:get-public-details', { groupId }),
-    getGroupMembers: (groupId: string, offset = 0, n = 100) => ipcRenderer.invoke('groups:get-members', { groupId, offset, n }),
-    searchGroupMembers: (groupId: string, query: string, n = 20) => ipcRenderer.invoke('groups:search-members', { groupId, query, n }),
+    getGroupMembers: (groupId: string, offset = 0, n = 100) => ipcRenderer.invoke('groups:get-members', { groupId, offset, n }) as Promise<{ success: boolean; members?: GroupMember[]; error?: string }>,
+    searchGroupMembers: (groupId: string, query: string, n = 20) => ipcRenderer.invoke('groups:search-members', { groupId, query, n }) as Promise<{ success: boolean; members?: GroupMember[]; error?: string }>,
     getGroupRequests: (groupId: string) => ipcRenderer.invoke('groups:get-requests', { groupId }),
     respondToGroupRequest: (groupId: string, userId: string, action: 'accept' | 'deny') => ipcRenderer.invoke('groups:respond-request', { groupId, userId, action }),
     getGroupBans: (groupId: string) => ipcRenderer.invoke('groups:get-bans', { groupId }),
     getGroupInstances: (groupId: string) => ipcRenderer.invoke('groups:get-instances', { groupId }),
-    onGroupsUpdated: (callback: (data: { groups: any[] }) => void) => {
-        const handler = (_event: Electron.IpcRendererEvent, data: { groups: any[] }) => callback(data);
+    getAllActiveInstances: () => ipcRenderer.invoke('groups:get-all-active-instances'),
+    onGroupsUpdated: (callback: (data: { groups: VRChatGroup[] }) => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, data: { groups: VRChatGroup[] }) => callback(data);
         ipcRenderer.on('groups:updated', handler);
         return () => ipcRenderer.removeListener('groups:updated', handler);
     },
@@ -37,8 +61,8 @@ contextBridge.exposeInMainWorld('electron', {
         ipcRenderer.on('groups:cache-ready', handler);
         return () => ipcRenderer.removeListener('groups:cache-ready', handler);
     },
-    onGroupVerified: (callback: (data: { group: any }) => void) => {
-        const handler = (_event: Electron.IpcRendererEvent, data: { group: any }) => callback(data);
+    onGroupVerified: (callback: (data: { group: VRChatGroup }) => void) => {
+        const handler = (_event: Electron.IpcRendererEvent, data: { group: VRChatGroup }) => callback(data);
         ipcRenderer.on('groups:verified', handler);
         return () => ipcRenderer.removeListener('groups:verified', handler);
     },
@@ -57,6 +81,11 @@ contextBridge.exposeInMainWorld('electron', {
     // Worlds API
     getWorld: (worldId: string) => ipcRenderer.invoke('worlds:get-details', { worldId }),
 
+    // Avatars API
+    avatars: {
+        get: (avatarId: string) => ipcRenderer.invoke('avatars:get', { avatarId }),
+    },
+
     // Users API
     getUser: (userId: string) => ipcRenderer.invoke('users:get', { userId }),
     clearUserCache: (userId?: string) => ipcRenderer.invoke('users:clear-cache', { userId }),
@@ -69,8 +98,8 @@ contextBridge.exposeInMainWorld('electron', {
         reconnect: () => ipcRenderer.invoke('pipeline:reconnect'),
 
         // Event listeners for real-time updates
-        onEvent: (callback: (event: unknown) => void) => {
-            const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data);
+        onEvent: (callback: (event: PipelineEvent) => void) => {
+            const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as PipelineEvent);
             ipcRenderer.on('pipeline:event', handler);
             return () => ipcRenderer.removeListener('pipeline:event', handler);
         },
@@ -105,8 +134,8 @@ contextBridge.exposeInMainWorld('electron', {
             ipcRenderer.on('log:player-left', handler);
             return () => ipcRenderer.removeListener('log:player-left', handler);
         },
-        onLocation: (callback: (event: { worldId: string; timestamp: string }) => void) => {
-            const handler = (_event: Electron.IpcRendererEvent, data: { worldId: string; timestamp: string }) => callback(data);
+        onLocation: (callback: (event: { worldId: string; instanceId?: string; location?: string; timestamp: string }) => void) => {
+            const handler = (_event: Electron.IpcRendererEvent, data: { worldId: string; instanceId?: string; location?: string; timestamp: string }) => callback(data);
             ipcRenderer.on('log:location', handler);
             return () => ipcRenderer.removeListener('log:location', handler);
         },
@@ -157,6 +186,7 @@ contextBridge.exposeInMainWorld('electron', {
         setPath: (path: string) => ipcRenderer.invoke('storage:set-path', path),
         reset: () => ipcRenderer.invoke('storage:reconfigure'), // Alias reset to reconfigure for compatibility
         reconfigure: () => ipcRenderer.invoke('storage:reconfigure'),
+        openFolder: () => ipcRenderer.invoke('storage:open-folder'),
     },
 
     // Instance Presence API
@@ -179,8 +209,8 @@ contextBridge.exposeInMainWorld('electron', {
         inviteSelf: (worldId: string, instanceId: string) => ipcRenderer.invoke('instance:invite-self', { worldId, instanceId }),
         closeInstance: (worldId?: string, instanceId?: string) => ipcRenderer.invoke('instance:close-instance', { worldId, instanceId }),
         getInstanceInfo: () => ipcRenderer.invoke('instance:get-instance-info'),
-        onEntityUpdate: (callback: (entity: { id: string; displayName: string; rank: string; isGroupMember: boolean; status: string; avatarUrl?: string; lastUpdated: number }) => void) => {
-            const handler = (_event: Electron.IpcRendererEvent, entity: { id: string; displayName: string; rank: string; isGroupMember: boolean; status: string; avatarUrl?: string; lastUpdated: number }) => callback(entity);
+        onEntityUpdate: (callback: (entity: LiveEntity) => void) => {
+            const handler = (_event: Electron.IpcRendererEvent, entity: LiveEntity) => callback(entity);
             ipcRenderer.on('instance:entity-update', handler);
             return () => ipcRenderer.removeListener('instance:entity-update', handler);
         },
@@ -189,7 +219,8 @@ contextBridge.exposeInMainWorld('electron', {
             const handler = (_event: Electron.IpcRendererEvent, data: { sent: number; skipped: number; failed: number; total: number; current?: string; done?: boolean }) => callback(data);
             ipcRenderer.on('mass-invite:progress', handler);
             return () => ipcRenderer.removeListener('mass-invite:progress', handler);
-        }
+        },
+        getHealthStats: () => ipcRenderer.invoke('instance:get-health-stats'),
     },
 
     // Updater API
@@ -197,14 +228,14 @@ contextBridge.exposeInMainWorld('electron', {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         onUpdateAvailable: (callback: (info: any) => void) => {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const handler = (_event: any, info: any) => callback(info);
+            const handler = (_event: Electron.IpcRendererEvent, info: any) => callback(info);
             ipcRenderer.on('updater:update-available', handler);
             return () => ipcRenderer.removeListener('updater:update-available', handler);
         },
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         onDownloadProgress: (callback: (progressObj: any) => void) => {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const handler = (_event: any, progressObj: any) => callback(progressObj);
+            const handler = (_event: Electron.IpcRendererEvent, progressObj: any) => callback(progressObj);
             ipcRenderer.on('updater:download-progress', handler);
             return () => ipcRenderer.removeListener('updater:download-progress', handler);
         },
@@ -220,9 +251,9 @@ contextBridge.exposeInMainWorld('electron', {
     // AutoMod API
     automod: {
         getRules: (groupId: string) => ipcRenderer.invoke('automod:get-rules', groupId),
-        saveRule: (rule: unknown, groupId: string) => ipcRenderer.invoke('automod:save-rule', { rule, groupId }),
+        saveRule: (rule: AutoModRule, groupId: string) => ipcRenderer.invoke('automod:save-rule', { rule, groupId }),
         deleteRule: (ruleId: number, groupId: string) => ipcRenderer.invoke('automod:delete-rule', { ruleId, groupId }),
-        checkUser: (user: unknown, groupId: string) => ipcRenderer.invoke('automod:check-user', { user, groupId }),
+        checkUser: (user: AutoModUserInput, groupId: string) => ipcRenderer.invoke('automod:check-user', { user, groupId }),
         getHistory: (groupId?: string) => ipcRenderer.invoke('automod:get-history', { groupId }),
         clearHistory: () => ipcRenderer.invoke('automod:clear-history'),
         addToWhitelist: (groupId: string, ruleId: number, target: { userId?: string; groupId?: string }) => ipcRenderer.invoke('automod:add-to-whitelist', { groupId, ruleId, target }),
@@ -239,16 +270,16 @@ contextBridge.exposeInMainWorld('electron', {
         setAutoBan: (enabled: boolean, groupId: string) => ipcRenderer.invoke('automod:set-auto-ban', { enabled, groupId }),
         searchGroups: (query: string) => ipcRenderer.invoke('automod:search-groups', query),
         fetchMembers: (groupId: string) => ipcRenderer.invoke('automod:fetch-members', groupId),
-        evaluateMember: (args: { groupId: string; member: unknown }) => ipcRenderer.invoke('automod:evaluate-member', args),
-        scanGroupMembers: (groupId: string) => ipcRenderer.invoke('automod:scan-group-members', groupId),
+        evaluateMember: (args: { groupId: string; member: { user: VRChatUser } }) => ipcRenderer.invoke('automod:evaluate-member', args),
+        scanGroupMembers: (groupId: string) => ipcRenderer.invoke('automod:scan-group-members', groupId) as Promise<{ success: boolean; results?: ScanResult[]; error?: string }>,
     },
 
     // Instance Guard API
     instanceGuard: {
         getHistory: (groupId: string) => ipcRenderer.invoke('instance-guard:get-history', groupId),
         clearHistory: () => ipcRenderer.invoke('instance-guard:clear-history'),
-        onEvent: (callback: (data: unknown) => void) => {
-            const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data);
+        onEvent: (callback: (data: InstanceGuardEvent) => void) => {
+            const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data as InstanceGuardEvent);
             ipcRenderer.on('instance-guard:event', handler);
             return () => ipcRenderer.removeListener('instance-guard:event', handler);
         },
@@ -256,12 +287,12 @@ contextBridge.exposeInMainWorld('electron', {
 
     // OSC API
     osc: {
-        getConfig: () => ipcRenderer.invoke('osc:get-config'),
-        setConfig: (config: { enabled?: boolean; senderIp?: string; senderPort?: number; receiverPort?: number }) => ipcRenderer.invoke('osc:set-config', config),
+        getConfig: () => ipcRenderer.invoke('osc:get-config') as Promise<OscConfig>,
+        setConfig: (config: { enabled?: boolean; senderIp?: string; senderPort?: number; receiverPort?: number }) => ipcRenderer.invoke('osc:set-config', config) as Promise<OscConfig>,
         send: (address: string, args: unknown[]) => ipcRenderer.invoke('osc:send', { address, args }),
 
-        getAnnouncementConfig: (groupId: string) => ipcRenderer.invoke('osc:get-announcement-config', groupId),
-        setAnnouncementConfig: (groupId: string, config: unknown) => ipcRenderer.invoke('osc:set-announcement-config', { groupId, config })
+        getAnnouncementConfig: (groupId: string) => ipcRenderer.invoke('osc:get-announcement-config', groupId) as Promise<GroupAnnouncementConfig>,
+        setAnnouncementConfig: (groupId: string, config: unknown) => ipcRenderer.invoke('osc:set-announcement-config', { groupId, config }) as Promise<GroupAnnouncementConfig>
     },
 
     // Discord RPC API
@@ -287,16 +318,17 @@ contextBridge.exposeInMainWorld('electron', {
     watchlist: {
         getEntities: () => ipcRenderer.invoke('watchlist:get-entities'),
         getEntity: (id: string) => ipcRenderer.invoke('watchlist:get-entity', id),
-        saveEntity: (entity: unknown) => ipcRenderer.invoke('watchlist:save-entity', entity),
+        saveEntity: (entity: Partial<WatchedEntity>) => ipcRenderer.invoke('watchlist:save-entity', entity),
         deleteEntity: (id: string) => ipcRenderer.invoke('watchlist:delete-entity', id),
         getTags: () => ipcRenderer.invoke('watchlist:get-tags'),
-        saveTag: (tag: unknown) => ipcRenderer.invoke('watchlist:save-tag', tag),
+        saveTag: (tag: ModerationTag) => ipcRenderer.invoke('watchlist:save-tag', tag),
         deleteTag: (id: string) => ipcRenderer.invoke('watchlist:delete-tag', id),
         import: (json: string) => ipcRenderer.invoke('watchlist:import', json),
         export: () => ipcRenderer.invoke('watchlist:export'),
-        searchScannedUsers: (query: string) => ipcRenderer.invoke('watchlist:search-scanned-users', query),
-        onUpdate: (callback: (data: { entities: unknown[]; tags: unknown[] }) => void) => {
-            const handler = (_event: Electron.IpcRendererEvent, data: { entities: unknown[]; tags: unknown[] }) => callback(data);
+        searchScannedUsers: (query: string) => ipcRenderer.invoke('watchlist:search-scanned-users', query) as Promise<ScannedUser[]>,
+        getScannedUser: (userId: string) => ipcRenderer.invoke('watchlist:get-scanned-user', userId) as Promise<ScannedUser | null>,
+        onUpdate: (callback: (data: { entities: WatchedEntity[]; tags: ModerationTag[] }) => void) => {
+            const handler = (_event: Electron.IpcRendererEvent, data: { entities: WatchedEntity[]; tags: ModerationTag[] }) => callback(data);
             ipcRenderer.on('watchlist:update', handler);
             return () => ipcRenderer.removeListener('watchlist:update', handler);
         }
@@ -329,10 +361,17 @@ contextBridge.exposeInMainWorld('electron', {
         setUserNote: (userId: string, note: string) => ipcRenderer.invoke('userProfile:setUserNote', userId, note),
     },
 
+    // Player Flags API
+    playerFlags: {
+        getFlags: (userId: string) => ipcRenderer.invoke('playerFlags:getFlags', userId),
+        setFlags: (userId: string, flagIds: string[]) => ipcRenderer.invoke('playerFlags:setFlags', { userId, flagIds }),
+        getDefinitions: () => ipcRenderer.invoke('playerFlags:getDefinitions'),
+    },
+
     // Settings API
     settings: {
-        get: () => ipcRenderer.invoke('settings:get'),
-        update: (settings: unknown) => ipcRenderer.invoke('settings:update', settings),
+        get: () => ipcRenderer.invoke('settings:get') as Promise<AppSettings>,
+        update: (settings: unknown) => ipcRenderer.invoke('settings:update', settings) as Promise<AppSettings>,
         selectAudio: () => ipcRenderer.invoke('settings:select-audio'),
         getAudioData: (path: string) => ipcRenderer.invoke('settings:get-audio', path),
     },
@@ -351,16 +390,18 @@ contextBridge.exposeInMainWorld('electron', {
     // Friendship Manager API (Phase 2)
     friendship: {
         getStatus: () => ipcRenderer.invoke('friendship:get-status'),
-        getGameLog: (limit?: number) => ipcRenderer.invoke('friendship:get-game-log', limit),
+        getGameLog: (limit?: number) => ipcRenderer.invoke('friendship:get-game-log', limit) as Promise<GameLogEntry[]>,
         getPlayerLog: (options?: { limit?: number; search?: string; type?: 'join' | 'leave' | 'all' }) =>
-            ipcRenderer.invoke('friendship:get-player-log', options),
-        getFriendLocations: () => ipcRenderer.invoke('friendship:get-friend-locations'),
-        getSocialFeed: (limit?: number) => ipcRenderer.invoke('friendship:get-social-feed', limit),
-        getRelationshipEvents: (limit?: number) => ipcRenderer.invoke('friendship:get-relationship-events', limit),
+            ipcRenderer.invoke('friendship:get-player-log', options) as Promise<PlayerLogEntry[]>,
+        getFriendLocations: () => ipcRenderer.invoke('friendship:get-friend-locations') as Promise<FriendLocation[]>,
+        getSocialFeed: (limit?: number) => ipcRenderer.invoke('friendship:get-social-feed', limit) as Promise<SocialFeedEntry[]>,
+        getRelationshipEvents: (limit?: number) => ipcRenderer.invoke('friendship:get-relationship-events', limit) as Promise<RelationshipEvent[]>,
         refreshFriends: () => ipcRenderer.invoke('friendship:refresh-friends'),
         refreshRelationships: () => ipcRenderer.invoke('friendship:refresh-relationships'),
-        onUpdate: (callback: (data: unknown) => void) => {
-            const handler = (_event: Electron.IpcRendererEvent, data: unknown) => callback(data);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        onUpdate: (callback: (data: any) => void) => {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const handler = (_event: Electron.IpcRendererEvent, data: any) => callback(data);
             ipcRenderer.on('friendship:update', handler);
             return () => ipcRenderer.removeListener('friendship:update', handler);
         },
@@ -368,6 +409,16 @@ contextBridge.exposeInMainWorld('electron', {
         getWorldStats: (worldId: string) => ipcRenderer.invoke('friendship:get-world-stats', worldId),
         getFriendsList: () => ipcRenderer.invoke('friendship:get-friends-list'),
         getMutualsBatch: (userIds: string[]) => ipcRenderer.invoke('friendship:get-mutuals-batch', userIds),
+        onStatsUpdate: (callback: (data: { userIds: string[]; addedMinutes: number }) => void) => {
+            const handler = (_event: Electron.IpcRendererEvent, data: { userIds: string[]; addedMinutes: number }) => callback(data);
+            ipcRenderer.on('friendship:stats-update', handler);
+            return () => ipcRenderer.removeListener('friendship:stats-update', handler);
+        },
+    },
+
+    // Log Scanner API
+    logScanner: {
+        scan: () => ipcRenderer.invoke('log-scanner:scan'),
     },
 
     // Generic IPC Renderer for event listening
