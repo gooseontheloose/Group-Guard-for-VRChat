@@ -1,22 +1,22 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { 
-    VRChatGroup, 
-    GroupMember, 
-    PipelineEvent, 
-    AutoModRule, 
-    InstanceGuardEvent, 
-    LiveEntity, 
-    ScannedUser, 
-    AutoModUserInput, 
-    GameLogEntry, 
-    FriendLocation, 
-    SocialFeedEntry, 
-    PlayerLogEntry, 
-    RelationshipEvent, 
-    OscConfig, 
-    WatchedEntity, 
-    ModerationTag, 
-    GroupAnnouncementConfig, 
+import type {
+    VRChatGroup,
+    GroupMember,
+    PipelineEvent,
+    AutoModRule,
+    InstanceGuardEvent,
+    LiveEntity,
+    ScannedUser,
+    AutoModUserInput,
+    GameLogEntry,
+    FriendLocation,
+    SocialFeedEntry,
+    PlayerLogEntry,
+    RelationshipEvent,
+    OscConfig,
+    WatchedEntity,
+    ModerationTag,
+    GroupAnnouncementConfig,
     AppSettings,
     VRChatUser,
     ScanResult
@@ -80,6 +80,11 @@ contextBridge.exposeInMainWorld('electron', {
 
     // Worlds API
     getWorld: (worldId: string) => ipcRenderer.invoke('worlds:get-details', { worldId }),
+
+    // Avatars API
+    avatars: {
+        get: (avatarId: string) => ipcRenderer.invoke('avatars:get', { avatarId }),
+    },
 
     // Users API
     getUser: (userId: string) => ipcRenderer.invoke('users:get', { userId }),

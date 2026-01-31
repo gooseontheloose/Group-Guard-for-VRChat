@@ -96,7 +96,9 @@ class SocialFeedService {
             details = `Now representing: ${friend.representedGroup || 'No Group'}`;
         } else if (change.avatar && friend.status !== 'offline') {
             feedType = 'avatar';
-            details = 'Switched Avatar';
+            // We use the ID for the modal, but the text is generic unless we fetch the name (which is async/expensive here).
+            // The frontend will make "Avatar Changed" clickable if data.currentAvatarId exists.
+            details = 'Avatar Changed';
         }
 
         // Location change (only if not newly offline)
@@ -107,6 +109,28 @@ class SocialFeedService {
             // Map "Private World" to something nicer if it's just 'private'
             if (details === 'private') details = 'Private World';
         }
+
+        // ... (existing helper logic)
+
+        // DEDUPLICATION LOGIC
+        // We use the `lastStatus` cache (userId -> lastLoggedDetails) to prevent
+        // spamming the feed with identical updates (e.g. Polling noise)
+        if (feedType === 'status') {
+            const last = this.lastStatus.get(userId);
+            // If the message is exactly the same as the last one we successfully logged, skip it.
+            if (last === details) {
+                // logger.debug(`Skipping duplicate status update for ${displayName}: ${details}`);
+                return;
+            }
+            // Update cache with new details
+            this.lastStatus.set(userId, details);
+        }
+
+        // Special handling for Online/Offline to clear/reset duplicator if needed?
+        // Actually, if they go offline, we shouldn't necessarily clear the 'last status message'
+        // because if they come back online with the SAME status, it might be interesting to know?
+        // But usually "Status message" is independent of online/offline.
+        // Let's just track status messages for now.
 
         if (feedType) {
             const entry: SocialFeedEntry = {

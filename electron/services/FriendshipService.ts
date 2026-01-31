@@ -67,7 +67,9 @@ class FriendshipService {
                     location: payload.type === 'friend-location' ? ((content.location as string) || 'private') :
                         payload.type === 'friend-offline' ? 'offline' : undefined,
                     statusDescription: content.statusDescription as string | undefined,
-                    representedGroup: content.representedGroup as string | undefined
+                    representedGroup: content.representedGroup as string | undefined,
+                    // Try to find avatar ID in various fields (websocket might have it in user object)
+                    currentAvatarId: (content.currentAvatarId as string) || (content.avatarId as string) || undefined
                 });
             }
         });
@@ -196,6 +198,8 @@ class FriendshipService {
                         location: (friend.location as string) || 'private',
                         statusDescription: friend.statusDescription as string | undefined,
                         representedGroup: (friend as any).representedGroup as string | undefined,
+                        // Cast friend to any because typed interface might be missing it, but API returns it
+                        currentAvatarId: (friend as any).currentAvatarRequestId || (friend as any).currentAvatarId as string | undefined,
                         // Mark as NOT offline since we polled from 'online' list
                     });
                 }

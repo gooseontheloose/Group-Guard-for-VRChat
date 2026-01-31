@@ -232,201 +232,205 @@ export const FriendsListView: React.FC = () => {
                 </div>
             </LogFilterBar>
 
-            {/* Table */}
-            <div style={{ flex: 1, overflowY: 'auto', padding: '0' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                        <tr style={{
-                            color: 'rgba(255,255,255,0.7)',
-                            fontSize: '0.7rem',
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.05em',
-                            position: 'sticky',
-                            top: 0,
-                            background: 'var(--glass-bg, #1a1a1a)',
-                            zIndex: 10
-                        }}>
-                            <th style={{ textAlign: 'left', padding: '0.65rem 1rem', borderBottom: '1px solid var(--border-color)', minWidth: '220px' }}>User</th>
-                            <th style={{ textAlign: 'left', padding: '0.65rem 0.75rem', borderBottom: '1px solid var(--border-color)', minWidth: '80px' }}>Rank</th>
-                            <th style={{ textAlign: 'center', padding: '0.65rem 0.75rem', borderBottom: '1px solid var(--border-color)', minWidth: '80px', cursor: 'pointer', whiteSpace: 'nowrap' }} onClick={() => { setSortBy('friendScore'); setSortAscending(!sortAscending); }}>Score{sortBy === 'friendScore' && (sortAscending ? '↑' : '↓')}</th>
-                            <th style={{ textAlign: 'center', padding: '0.65rem 0.5rem', borderBottom: '1px solid var(--border-color)', minWidth: '60px' }} title="Mutual Friends">Friends</th>
-                            <th style={{ textAlign: 'center', padding: '0.65rem 0.5rem', borderBottom: '1px solid var(--border-color)', minWidth: '60px' }} title="Mutual Groups">Groups</th>
-                            <th style={{ textAlign: 'center', padding: '0.65rem 0.5rem', borderBottom: '1px solid var(--border-color)', minWidth: '55px' }} title="Platform">Plat</th>
-                            <th style={{ textAlign: 'center', padding: '0.65rem 0.5rem', borderBottom: '1px solid var(--border-color)', minWidth: '50px' }} title="VRC+ Subscriber">VRC+</th>
-                            <th style={{ textAlign: 'center', padding: '0.65rem 0.5rem', borderBottom: '1px solid var(--border-color)', minWidth: '45px' }} title="Age Verified (18+)">18+</th>
-                            <th style={{ textAlign: 'center', padding: '0.65rem 0.75rem', borderBottom: '1px solid var(--border-color)', minWidth: '60px' }}>Joins</th>
-                            <th style={{ textAlign: 'center', padding: '0.65rem 0.75rem', borderBottom: '1px solid var(--border-color)', minWidth: '80px' }}>Time</th>
-                            <th style={{ textAlign: 'left', padding: '0.65rem 0.75rem', borderBottom: '1px solid var(--border-color)', minWidth: '90px', cursor: 'pointer', whiteSpace: 'nowrap' }} onClick={() => { setSortBy('dateKnown'); setSortAscending(!sortAscending); }}>Since{sortBy === 'dateKnown' && (sortAscending ? '↑' : '↓')}</th>
-                            <th style={{ textAlign: 'left', padding: '0.65rem 1rem', borderBottom: '1px solid var(--border-color)', cursor: 'pointer', whiteSpace: 'nowrap' }} onClick={() => { setSortBy('lastSeen'); setSortAscending(!sortAscending); }}>Last Seen{sortBy === 'lastSeen' && (sortAscending ? '↑' : '↓')}</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {loading && friends.length === 0 ? (
-                            Array.from({ length: 15 }).map((_, i) => (
-                                <tr key={`skeleton-${i}`} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                                    <td colSpan={11} style={{ padding: '0.65rem 1rem' }}>
-                                        <div style={{ height: '24px', width: '100%', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', animation: 'pulse 1.5s infinite' }} />
-                                    </td>
-                                </tr>
-                            ))
-                        ) : paginatedFriends.map(friend => {
-                            const userImage = friend.profilePicOverride || friend.userIcon || friend.currentAvatarThumbnailImageUrl;
-                            return (
-                                <tr
-                                    key={friend.userId}
-                                    style={{
-                                        borderBottom: '1px solid rgba(255,255,255,0.03)',
-                                        transition: 'background 0.15s ease'
-                                    }}
-                                    onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}
-                                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                                >
-                                    {/* User Column */}
-                                    <td style={{ padding: '0.65rem 1rem' }}>
-                                        <div
-                                            style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer' }}
-                                            onClick={() => openUserProfile(friend.userId, friend.displayName)}
-                                        >
-                                            <div style={{
-                                                width: '32px',
-                                                height: '32px',
-                                                borderRadius: '50%',
-                                                border: `2px solid ${getStatusColor(friend.status)}`,
-                                                overflow: 'hidden',
-                                                background: '#000',
-                                                flexShrink: 0
+            {/* Table Container - Uses Absolute Fill to force scroll within available space */}
+            <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
+                <div style={{ position: 'absolute', inset: 0, overflowY: 'auto', padding: '0' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                            <tr style={{
+                                color: 'rgba(255,255,255,0.7)',
+                                fontSize: '0.7rem',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.05em',
+                                position: 'sticky',
+                                top: 0,
+                                background: 'var(--glass-bg, #1a1a1a)',
+                                zIndex: 10
+                            }}>
+                                <th style={{ textAlign: 'left', padding: '0.65rem 1rem', borderBottom: '1px solid var(--border-color)', minWidth: '220px' }}>User</th>
+                                <th style={{ textAlign: 'left', padding: '0.65rem 0.75rem', borderBottom: '1px solid var(--border-color)', minWidth: '80px' }}>Rank</th>
+                                <th style={{ textAlign: 'center', padding: '0.65rem 0.75rem', borderBottom: '1px solid var(--border-color)', minWidth: '80px', cursor: 'pointer', whiteSpace: 'nowrap' }} onClick={() => { setSortBy('friendScore'); setSortAscending(!sortAscending); }}>Score{sortBy === 'friendScore' && (sortAscending ? '↑' : '↓')}</th>
+                                <th style={{ textAlign: 'center', padding: '0.65rem 0.5rem', borderBottom: '1px solid var(--border-color)', minWidth: '60px' }} title="Mutual Friends">Friends</th>
+                                <th style={{ textAlign: 'center', padding: '0.65rem 0.5rem', borderBottom: '1px solid var(--border-color)', minWidth: '60px' }} title="Mutual Groups">Groups</th>
+                                <th style={{ textAlign: 'center', padding: '0.65rem 0.5rem', borderBottom: '1px solid var(--border-color)', minWidth: '55px' }} title="Platform">Plat</th>
+                                <th style={{ textAlign: 'center', padding: '0.65rem 0.5rem', borderBottom: '1px solid var(--border-color)', minWidth: '50px' }} title="VRC+ Subscriber">VRC+</th>
+                                <th style={{ textAlign: 'center', padding: '0.65rem 0.5rem', borderBottom: '1px solid var(--border-color)', minWidth: '45px' }} title="Age Verified (18+)">18+</th>
+                                <th style={{ textAlign: 'center', padding: '0.65rem 0.75rem', borderBottom: '1px solid var(--border-color)', minWidth: '60px' }}>Joins</th>
+                                <th style={{ textAlign: 'center', padding: '0.65rem 0.75rem', borderBottom: '1px solid var(--border-color)', minWidth: '80px' }}>Time</th>
+                                <th style={{ textAlign: 'left', padding: '0.65rem 0.75rem', borderBottom: '1px solid var(--border-color)', minWidth: '90px', cursor: 'pointer', whiteSpace: 'nowrap' }} onClick={() => { setSortBy('dateKnown'); setSortAscending(!sortAscending); }}>Since{sortBy === 'dateKnown' && (sortAscending ? '↑' : '↓')}</th>
+                                <th style={{ textAlign: 'left', padding: '0.65rem 1rem', borderBottom: '1px solid var(--border-color)', cursor: 'pointer', whiteSpace: 'nowrap' }} onClick={() => { setSortBy('lastSeen'); setSortAscending(!sortAscending); }}>Last Seen{sortBy === 'lastSeen' && (sortAscending ? '↑' : '↓')}</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {loading && friends.length === 0 ? (
+                                Array.from({ length: 15 }).map((_, i) => (
+                                    <tr key={`skeleton-${i}`} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                                        <td colSpan={11} style={{ padding: '0.65rem 1rem' }}>
+                                            <div style={{ height: '24px', width: '100%', background: 'rgba(255,255,255,0.05)', borderRadius: '4px', animation: 'pulse 1.5s infinite' }} />
+                                        </td>
+                                    </tr>
+                                ))
+                            ) : paginatedFriends.map(friend => {
+                                const userImage = friend.profilePicOverride || friend.userIcon || friend.currentAvatarThumbnailImageUrl;
+                                return (
+                                    <tr
+                                        key={friend.userId}
+                                        style={{
+                                            borderBottom: '1px solid rgba(255,255,255,0.03)',
+                                            transition: 'background 0.15s ease'
+                                        }}
+                                        onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}
+                                        onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                                    >
+                                        {/* User Column */}
+                                        <td style={{ padding: '0.65rem 1rem' }}>
+                                            <div
+                                                style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer' }}
+                                                onClick={() => openUserProfile(friend.userId, friend.displayName)}
+                                            >
+                                                <div style={{
+                                                    width: '32px',
+                                                    height: '32px',
+                                                    borderRadius: '50%',
+                                                    border: `2px solid ${getStatusColor(friend.status)}`,
+                                                    overflow: 'hidden',
+                                                    background: '#000',
+                                                    flexShrink: 0
+                                                }}>
+                                                    {userImage ? (
+                                                        <img src={userImage} alt={friend.displayName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                                    ) : (
+                                                        <div style={{ width: '100%', height: '100%', background: '#222', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>👤</div>
+                                                    )}
+                                                </div>
+                                                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                                    <span style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--color-text-main)' }}>{friend.displayName}</span>
+                                                    <span style={{ fontSize: '0.65rem', color: getStatusColor(friend.status) }}>{friend.status}</span>
+                                                </div>
+                                            </div>
+                                        </td>
+
+                                        {/* Rank */}
+                                        <td style={{ padding: '0.65rem 0.5rem' }}>
+                                            <TrustRankBadge
+                                                tags={users.get(friend.userId)?.tags}
+                                                fallbackRank={users.get(friend.userId)?.tags ? undefined : 'Visitor'}
+                                            />
+                                        </td>
+
+                                        {/* Friend Score */}
+                                        <td style={{ padding: '0.65rem 0.5rem', textAlign: 'center' }}>
+                                            <span style={{
+                                                fontWeight: 800,
+                                                color: 'var(--color-primary)',
+                                                fontSize: '0.85rem',
+                                                textShadow: '0 0 10px rgba(var(--color-primary-rgb), 0.3)'
                                             }}>
-                                                {userImage ? (
-                                                    <img src={userImage} alt={friend.displayName} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                                ) : (
-                                                    <div style={{ width: '100%', height: '100%', background: '#222', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>👤</div>
+                                                {friend.friendScore.toLocaleString()}
+                                            </span>
+                                        </td>
+
+                                        {/* Mutual Friends */}
+                                        <td style={{ padding: '0.65rem 0.5rem', textAlign: 'center', fontSize: '0.8rem', color: 'var(--color-text-dim)' }}>
+                                            {mutuals[friend.userId] ? (
+                                                <span title={`${mutuals[friend.userId].friends} mutual friends`}>
+                                                    {mutuals[friend.userId].friends}
+                                                </span>
+                                            ) : (
+                                                <span style={{ opacity: 0.4 }}>—</span>
+                                            )}
+                                        </td>
+
+                                        {/* Mutual Groups */}
+                                        <td style={{ padding: '0.65rem 0.5rem', textAlign: 'center', fontSize: '0.8rem', color: 'var(--color-text-dim)' }}>
+                                            {mutuals[friend.userId] ? (
+                                                <span title={`${mutuals[friend.userId].groups} mutual groups`}>
+                                                    {mutuals[friend.userId].groups}
+                                                </span>
+                                            ) : (
+                                                <span style={{ opacity: 0.4 }}>—</span>
+                                            )}
+                                        </td>
+
+                                        {/* Platform */}
+                                        <td style={{ padding: '0.65rem 0.5rem', textAlign: 'center', fontSize: '0.9rem' }} title={users.get(friend.userId)?.last_platform || 'Unknown'}>
+                                            {getPlatformIcon(users.get(friend.userId)?.last_platform)}
+                                        </td>
+
+                                        {/* VRC+ */}
+                                        <td style={{ padding: '0.65rem 0.5rem', textAlign: 'center' }}>
+                                            <VRCPlusBadge isVRCPlus={users.get(friend.userId)?.tags?.includes('system_supporter')} />
+                                        </td>
+
+                                        {/* 18+ Age Verified */}
+                                        <td style={{ padding: '0.65rem 0.5rem', textAlign: 'center' }}>
+                                            <AgeVerifiedBadge isVerified={users.get(friend.userId)?.ageVerificationStatus === '18+'} />
+                                        </td>
+
+                                        {/* Joins */}
+                                        <td style={{ padding: '0.65rem 0.5rem', textAlign: 'center', color: 'var(--color-text-dim)', fontSize: '0.75rem' }}>
+                                            {friend.encounterCount}
+                                        </td>
+
+                                        {/* Time */}
+                                        <td style={{ padding: '0.65rem 0.5rem', textAlign: 'center', color: 'var(--color-text-dim)', fontSize: '0.75rem' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                                                {formatDuration(friend.timeSpent)}
+                                                {/* Active Pulse Indicator */}
+                                                {friend.status?.toLowerCase() !== 'offline' && (
+                                                    <div
+                                                        title="Tracking active time..."
+                                                        style={{
+                                                            width: '6px',
+                                                            height: '6px',
+                                                            borderRadius: '50%',
+                                                            background: '#22c55e',
+                                                            boxShadow: '0 0 5px #22c55e',
+                                                            animation: 'pulse 2s infinite'
+                                                        }}
+                                                    />
                                                 )}
                                             </div>
-                                            <div style={{ display: 'flex', flexDirection: 'column' }}>
-                                                <span style={{ fontWeight: 600, fontSize: '0.85rem', color: 'var(--color-text-main)' }}>{friend.displayName}</span>
-                                                <span style={{ fontSize: '0.65rem', color: getStatusColor(friend.status) }}>{friend.status}</span>
-                                            </div>
-                                        </div>
-                                    </td>
+                                        </td>
 
-                                    {/* Rank */}
-                                    <td style={{ padding: '0.65rem 0.5rem' }}>
-                                        <TrustRankBadge
-                                            tags={users.get(friend.userId)?.tags}
-                                            fallbackRank={users.get(friend.userId)?.tags ? undefined : 'Visitor'}
-                                        />
-                                    </td>
+                                        {/* Known Since */}
+                                        <td style={{ padding: '0.65rem 0.5rem', color: 'var(--color-text-dim)', fontSize: '0.75rem' }}>
+                                            {formatDate(friend.dateKnown)}
+                                        </td>
 
-                                    {/* Friend Score */}
-                                    <td style={{ padding: '0.65rem 0.5rem', textAlign: 'center' }}>
-                                        <span style={{
-                                            fontWeight: 800,
-                                            color: 'var(--color-primary)',
-                                            fontSize: '0.85rem',
-                                            textShadow: '0 0 10px rgba(var(--color-primary-rgb), 0.3)'
-                                        }}>
-                                            {friend.friendScore.toLocaleString()}
-                                        </span>
-                                    </td>
-
-                                    {/* Mutual Friends */}
-                                    <td style={{ padding: '0.65rem 0.5rem', textAlign: 'center', fontSize: '0.8rem', color: 'var(--color-text-dim)' }}>
-                                        {mutuals[friend.userId] ? (
-                                            <span title={`${mutuals[friend.userId].friends} mutual friends`}>
-                                                {mutuals[friend.userId].friends}
-                                            </span>
-                                        ) : (
-                                            <span style={{ opacity: 0.4 }}>—</span>
-                                        )}
-                                    </td>
-
-                                    {/* Mutual Groups */}
-                                    <td style={{ padding: '0.65rem 0.5rem', textAlign: 'center', fontSize: '0.8rem', color: 'var(--color-text-dim)' }}>
-                                        {mutuals[friend.userId] ? (
-                                            <span title={`${mutuals[friend.userId].groups} mutual groups`}>
-                                                {mutuals[friend.userId].groups}
-                                            </span>
-                                        ) : (
-                                            <span style={{ opacity: 0.4 }}>—</span>
-                                        )}
-                                    </td>
-
-                                    {/* Platform */}
-                                    <td style={{ padding: '0.65rem 0.5rem', textAlign: 'center', fontSize: '0.9rem' }} title={users.get(friend.userId)?.last_platform || 'Unknown'}>
-                                        {getPlatformIcon(users.get(friend.userId)?.last_platform)}
-                                    </td>
-
-                                    {/* VRC+ */}
-                                    <td style={{ padding: '0.65rem 0.5rem', textAlign: 'center' }}>
-                                        <VRCPlusBadge isVRCPlus={users.get(friend.userId)?.tags?.includes('system_supporter')} />
-                                    </td>
-
-                                    {/* 18+ Age Verified */}
-                                    <td style={{ padding: '0.65rem 0.5rem', textAlign: 'center' }}>
-                                        <AgeVerifiedBadge isVerified={users.get(friend.userId)?.ageVerificationStatus === '18+'} />
-                                    </td>
-
-                                    {/* Joins */}
-                                    <td style={{ padding: '0.65rem 0.5rem', textAlign: 'center', color: 'var(--color-text-dim)', fontSize: '0.75rem' }}>
-                                        {friend.encounterCount}
-                                    </td>
-
-                                    {/* Time */}
-                                    <td style={{ padding: '0.65rem 0.5rem', textAlign: 'center', color: 'var(--color-text-dim)', fontSize: '0.75rem' }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-                                            {formatDuration(friend.timeSpent)}
-                                            {/* Active Pulse Indicator */}
-                                            {friend.status?.toLowerCase() !== 'offline' && (
-                                                <div
-                                                    title="Tracking active time..."
-                                                    style={{
-                                                        width: '6px',
-                                                        height: '6px',
-                                                        borderRadius: '50%',
-                                                        background: '#22c55e',
-                                                        boxShadow: '0 0 5px #22c55e',
-                                                        animation: 'pulse 2s infinite'
-                                                    }}
-                                                />
+                                        {/* Last Seen */}
+                                        <td style={{ padding: '0.65rem 1rem', color: 'var(--color-text-dim)', fontSize: '0.75rem' }}>
+                                            {friend.status.toLowerCase() !== 'offline' ? (
+                                                <span style={{ color: '#22c55e', fontWeight: 600 }}>Currently Online</span>
+                                            ) : (
+                                                formatDate(friend.lastSeen)
                                             )}
-                                        </div>
-                                    </td>
-
-                                    {/* Known Since */}
-                                    <td style={{ padding: '0.65rem 0.5rem', color: 'var(--color-text-dim)', fontSize: '0.75rem' }}>
-                                        {formatDate(friend.dateKnown)}
-                                    </td>
-
-                                    {/* Last Seen */}
-                                    <td style={{ padding: '0.65rem 1rem', color: 'var(--color-text-dim)', fontSize: '0.75rem' }}>
-                                        {friend.status.toLowerCase() !== 'offline' ? (
-                                            <span style={{ color: '#22c55e', fontWeight: 600 }}>Currently Online</span>
-                                        ) : (
-                                            formatDate(friend.lastSeen)
-                                        )}
-                                    </td>
-                                </tr>
-                            );
-                        })}
-                    </tbody>
-                </table>
+                                        </td>
+                                    </tr>
+                                );
+                            })}
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
             {/* Pagination */}
-            {totalPages > 1 && (
-                <div style={{
-                    padding: '0.75rem 1rem',
-                    borderTop: '1px solid var(--border-color)',
-                    display: 'flex',
-                    justifyContent: 'center',
-                    alignItems: 'center',
-                    gap: '0.5rem'
-                }}>
-                    <NeonButton variant="ghost" size="sm" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}>← Prev</NeonButton>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--color-text-dim)' }}>Page {page + 1} of {totalPages}</span>
-                    <NeonButton variant="ghost" size="sm" onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1}>Next →</NeonButton>
-                </div>
-            )}
+            {
+                totalPages > 1 && (
+                    <div style={{
+                        padding: '0.75rem 1rem',
+                        borderTop: '1px solid var(--border-color)',
+                        display: 'flex',
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        gap: '0.5rem'
+                    }}>
+                        <NeonButton variant="ghost" size="sm" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}>← Prev</NeonButton>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--color-text-dim)' }}>Page {page + 1} of {totalPages}</span>
+                        <NeonButton variant="ghost" size="sm" onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1}>Next →</NeonButton>
+                    </div>
+                )
+            }
 
             <ProfileModal
                 profile={profile}
@@ -435,6 +439,6 @@ export const FriendsListView: React.FC = () => {
                 openWorldProfile={openWorldProfile}
                 openGroupProfile={openGroupProfile}
             />
-        </GlassPanel>
+        </GlassPanel >
     );
 };
