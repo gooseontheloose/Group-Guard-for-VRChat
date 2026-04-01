@@ -130,6 +130,8 @@ export const networkService = {
                             await new Promise(resolve => setTimeout(resolve, delay));
                             continue;
                         }
+                        // Retries exhausted
+                        throw new Error('Rate Limited');
                     }
 
                     throw error;

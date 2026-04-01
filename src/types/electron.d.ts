@@ -376,12 +376,15 @@ export interface PlayerLogEntry {
 export interface RelationshipEvent {
   id: string;
   timestamp: string;
-  type: 'add' | 'remove' | 'name_change' | 'avatar_change' | 'rank_change' | 'bio_change';
+  type: 'add' | 'remove' | 'name_change' | 'rank_change' | 'bio_change' | 'avatar_change';
   userId: string;
   displayName: string;
   previousName?: string;
   avatarUrl?: string;
+  avatarId?: string;
+  avatarName?: string; // Enriched name
   previousAvatarUrl?: string;
+  previousAvatarId?: string;
   tags?: string[];
   previousTags?: string[];
   bio?: string;

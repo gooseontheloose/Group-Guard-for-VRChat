@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import log from 'electron-log';
 import { serviceEventBus } from './ServiceEventBus';
+import { vrchatApiService } from './VRChatApiService';
 
 const logger = log.scope('SocialFeedService');
 
@@ -74,9 +75,76 @@ class SocialFeedService {
         this.isInitialized = true;
         this.lastStatus.clear();
         this.cleanupLegacyEntries();
+
+        // Initialize Avatar Service
+        // eslint-disable-next-line @typescript-eslint/no-require-imports
+        const { avatarResolutionService } = require('./AvatarResolutionService');
+        avatarResolutionService.initialize(userDataDir);
+
+        // Listen for resolution updates to trigger frontend refresh
+        serviceEventBus.on('avatar-resolved', () => {
+            // We emit a generic 'update' or re-emit the last entry? 
+            // Simplest way to force frontend refresh is to say the feed updated.
+            // But the frontend listens to 'social-feed-entry-added' mostly.
+            // Let's emit a specific 'social-feed-updated' which we can add listener for or re-use existing channel.
+            // Actually, FeedView listens to window.electron.friendship.onUpdate.
+            // We can trigger that by emitting a dummy event or just relying on the poll? 
+            // FeedView.tsx:83 `window.electron.friendship.onUpdate`
+            // That maps to `serviceEventBus.on('social-feed-updated')` usually?
+            // Let's check preload... assume emitting 'social-feed-entry-added' might add duplicates if not careful.
+            // We will assume `onUpdate` is flexible. Checking preload would be good but let's stick to emitting an event the frontend will catch.
+            serviceEventBus.emit('social-feed-updated', {});
+        });
+
         logger.info(`SocialFeedService initialized. DB: ${this.dbPath}`);
     }
 
+    public async getRecentEntries(limit?: number): Promise<SocialFeedEntry[]> {
+        if (!this.dbPath || !fs.existsSync(this.dbPath)) return [];
+        try {
+            // eslint-disable-next-line @typescript-eslint/no-require-imports
+            const { avatarResolutionService } = require('./AvatarResolutionService');
+
+            const content = await fs.promises.readFile(this.dbPath, 'utf-8');
+            const lines = content.trim().split('\n');
+            const rawEntries = (limit && limit > 0) ? lines.slice(-limit) : lines;
+
+            const entries = rawEntries
+                .map(line => {
+                    try { return JSON.parse(line) as SocialFeedEntry; } catch { return null; }
+                })
+                .filter((e): e is SocialFeedEntry => e !== null)
+                .reverse();
+
+            // ENRICHMENT: Inject resolved avatar names
+            return entries.map(entry => {
+                if (entry.type === 'avatar' && (entry.data as any)?.currentAvatarId) {
+                    const avatarId = (entry.data as any).currentAvatarId;
+                    const cachedName = avatarResolutionService.getNameOrQueue(avatarId);
+
+                    if (cachedName) {
+                        // Dynamically update the details for display
+                        // We check if it's currently showing the generic message
+                        if (entry.details?.includes('Background Check') || entry.details === 'Avatar Changed') {
+                            return {
+                                ...entry,
+                                details: `Switched to ${cachedName}`,
+                                data: {
+                                    ...entry.data,
+                                    avatarName: cachedName
+                                }
+                            };
+                        }
+                    }
+                }
+                return entry;
+            });
+
+        } catch (e) {
+            logger.error('Failed to read social feed:', e);
+            return [];
+        }
+    }
     public shutdown() {
         this.isInitialized = false;
         this.dbPath = null;
@@ -144,12 +212,26 @@ class SocialFeedService {
             }
         }
 
+
+
         // 3. AVATAR CHANGE
         if (change.avatar && friend.status !== 'offline') {
-            const avatarId = (friend as any).currentAvatarId;
-            const avatarName = (friend as any).avatarName;
+            const avatarId = (friend as any).currentAvatarRequestId || (friend as any).currentAvatarId || (friend as any).avatarId;
+            let avatarName = (friend as any).avatarName;
 
             if (avatarId && this.lastAvatarId.get(userId) !== avatarId) {
+                // ENRICHMENT: If we have ID but no name, try to fetch it
+                if (!avatarName) {
+                    try {
+                        const avatarRes = await vrchatApiService.getAvatar(avatarId);
+                        if (avatarRes.success && avatarRes.data) {
+                            avatarName = avatarRes.data.name;
+                        }
+                    } catch (e) {
+                        logger.warn(`Failed to fetch avatar details for ${avatarId}`, e);
+                    }
+                }
+
                 this.lastAvatarId.set(userId, avatarId);
                 entries.push({
                     type: 'avatar',
@@ -227,9 +309,22 @@ class SocialFeedService {
             if (finalAvatarId && this.lastAvatarId.get(userId) === finalAvatarId) {
                 return;
             }
-            if (finalAvatarId) {
-                this.lastAvatarId.set(userId, finalAvatarId);
+        }
+
+        // ENRICHMENT: If we have ID but no name, fetch it so the feed looks good
+        if (finalAvatarId && !finalAvatarName) {
+            try {
+                const avatarRes = await vrchatApiService.getAvatar(finalAvatarId);
+                if (avatarRes.success && avatarRes.data) {
+                    finalAvatarName = avatarRes.data.name;
+                }
+            } catch (e) {
+                logger.warn(`Failed to fetch avatar details for ${finalAvatarId}`, e);
             }
+        }
+
+        if (finalAvatarId) {
+            this.lastAvatarId.set(userId, finalAvatarId);
         }
 
         const entry: SocialFeedEntry = {
@@ -351,23 +446,7 @@ class SocialFeedService {
         }
     }
 
-    public async getRecentEntries(limit?: number): Promise<SocialFeedEntry[]> {
-        if (!this.dbPath || !fs.existsSync(this.dbPath)) return [];
-        try {
-            const content = await fs.promises.readFile(this.dbPath, 'utf-8');
-            const lines = content.trim().split('\n');
-            const entries = (limit && limit > 0) ? lines.slice(-limit) : lines;
-            return entries
-                .map(line => {
-                    try { return JSON.parse(line) as SocialFeedEntry; } catch { return null; }
-                })
-                .filter((e): e is SocialFeedEntry => e !== null)
-                .reverse();
-        } catch (e) {
-            logger.error('Failed to read social feed:', e);
-            return [];
-        }
-    }
+
 
     private async cleanupLegacyEntries() {
         if (!this.dbPath || !fs.existsSync(this.dbPath)) return;

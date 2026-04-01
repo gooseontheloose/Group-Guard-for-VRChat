@@ -45,7 +45,8 @@
     left: 0;
     right: 0;
     margin-bottom: 8px;
-    background: var(--color-surface-card);
+    background: var(--color-surface-elevated);
+    backdrop-filter: blur(var(--glass-blur));
     border: 1px solid var(--border-color);
     border-radius: var(--border-radius);
     box-shadow: var(--shadow-floating);
@@ -71,6 +72,9 @@
     font-size: 0.8rem;
     color: var(--color-text-dim);
     transition: all 0.1s;
+    display: flex;
+    align-items: center;
+    gap: 12px;
 }
 
 .option:hover {
@@ -90,4 +94,29 @@
 
 .chevronRotated {
     transform: rotate(180deg);
+}
+
+.checkbox {
+    width: 16px;
+    height: 16px;
+    border-radius: 4px;
+    border: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    position: relative;
+    transition: all 0.2s;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.checkboxSelected {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    box-shadow: 0 0 10px var(--color-primary-glow);
+}
+
+.checkIcon {
+    color: black;
+    stroke-width: 4px;
 }

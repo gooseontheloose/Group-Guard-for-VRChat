@@ -1,15 +1,16 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import styles from './NeonSelect.module.css';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Check } from 'lucide-react';
 
 interface NeonSelectProps {
-    value?: string | null;
-    onChange: (value: string | null) => void;
+    value?: string | string[] | null;
+    onChange: (value: any) => void;
     options: { value: string; label: string }[];
     placeholder?: string;
     className?: string;
     disabled?: boolean;
     direction?: 'up' | 'down';
+    multiple?: boolean;
 }
 
 export const NeonSelect: React.FC<NeonSelectProps> = ({
@@ -19,7 +20,8 @@ export const NeonSelect: React.FC<NeonSelectProps> = ({
     placeholder = 'Select...',
     className,
     disabled = false,
-    direction = 'up'
+    direction = 'up',
+    multiple = false
 }) => {
     const [isOpen, setIsOpen] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
@@ -36,11 +38,40 @@ export const NeonSelect: React.FC<NeonSelectProps> = ({
     }, []);
 
     const handleSelect = (val: string) => {
-        onChange(val);
-        setIsOpen(false);
+        if (multiple) {
+            const currentValues = Array.isArray(value) ? [...value] : [];
+            const index = currentValues.indexOf(val);
+            if (index > -1) {
+                currentValues.splice(index, 1);
+            } else {
+                currentValues.push(val);
+            }
+            onChange(currentValues);
+        } else {
+            onChange(val);
+            setIsOpen(false);
+        }
     };
 
-    const selectedLabel = options.find(o => o.value === value)?.label || placeholder;
+    const isSelected = (val: string) => {
+        if (multiple) {
+            return Array.isArray(value) && value.includes(val);
+        }
+        return value === val;
+    };
+
+    const selectedLabel = useMemo(() => {
+        if (multiple) {
+            const count = Array.isArray(value) ? value.length : 0;
+            if (count === 0) return placeholder;
+            if (count === 1) {
+                const firstVal = (value as string[])[0];
+                return options.find(o => o.value === firstVal)?.label || placeholder;
+            }
+            return `${count} GROUPS SELECTED`;
+        }
+        return options.find(o => o.value === value)?.label || placeholder;
+    }, [value, multiple, options, placeholder]);
 
     return (
         <div ref={containerRef} className={`${styles.container} ${className || ''}`}>
@@ -58,15 +89,23 @@ export const NeonSelect: React.FC<NeonSelectProps> = ({
 
             {isOpen && (
                 <div className={`${styles.dropdown} ${direction === 'down' ? styles.dropdownOpenDown : ''}`}>
-                    {options.map((option) => (
-                        <div
-                            key={option.value}
-                            className={`${styles.option} ${option.value === value ? styles.optionSelected : ''}`}
-                            onClick={() => handleSelect(option.value)}
-                        >
-                            {option.label}
-                        </div>
-                    ))}
+                    {options.map((option) => {
+                        const checked = isSelected(option.value);
+                        return (
+                            <div
+                                key={option.value}
+                                className={`${styles.option} ${checked && !multiple ? styles.optionSelected : ''}`}
+                                onClick={() => handleSelect(option.value)}
+                            >
+                                {multiple && (
+                                    <div className={`${styles.checkbox} ${checked ? styles.checkboxSelected : ''}`}>
+                                        {checked && <Check size={12} className={styles.checkIcon} />}
+                                    </div>
+                                )}
+                                {option.label}
+                            </div>
+                        );
+                    })}
                     {options.length === 0 && (
                         <div className={styles.option} style={{ opacity: 0.5, cursor: 'default' }}>
                             No options

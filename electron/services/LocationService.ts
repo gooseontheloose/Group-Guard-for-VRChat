@@ -131,18 +131,16 @@ class LocationService {
     public setFriends(friendsList: FriendLocation[]) {
         const newIds = new Set(friendsList.map(f => f.userId));
 
-        // 1. Mark existing friends as offline if they are NOT in the new list (bulk update)
+        // 1. DELETE existing friends if they are NOT in the new list (bulk update - source of truth)
         for (const [userId, friend] of this.friends.entries()) {
-            if (!newIds.has(userId) && friend.status !== 'offline') {
-                logger.info(`Purging stale friend ${friend.displayName} (${userId}) - missing from online API list.`);
+            if (!newIds.has(userId)) {
+                logger.info(`Deleting stale friend ${friend.displayName} (${userId}) - missing from Full Friends List.`);
 
                 const previous = { ...friend };
-                friend.status = 'offline';
-                friend.location = 'offline';
-                friend.lastUpdated = new Date().toISOString();
+                this.friends.delete(userId);
 
                 serviceEventBus.emit('friend-state-changed', {
-                    friend: { ...friend },
+                    friend: { ...friend, status: 'offline', location: 'offline' }, // Notify that they are "gone"
                     previous,
                     change: { status: true, location: true, statusDescription: false, representedGroup: false, avatar: false }
                 });

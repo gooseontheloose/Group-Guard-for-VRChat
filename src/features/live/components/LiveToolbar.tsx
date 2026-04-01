@@ -25,8 +25,8 @@ interface LiveToolbarProps {
 
     // Roaming Props
     roamingGroups?: { id: string; name: string }[];
-    selectedRoamingGroupId?: string | null;
-    onSelectRoamingGroup?: (id: string | null) => void;
+    selectedRoamingGroupIds?: string[];
+    onSelectRoamingGroup?: (ids: string[]) => void;
 }
 
 export const LiveToolbar: React.FC<LiveToolbarProps> = ({
@@ -45,7 +45,7 @@ export const LiveToolbar: React.FC<LiveToolbarProps> = ({
     statusText,
     isLoading,
     roamingGroups,
-    selectedRoamingGroupId,
+    selectedRoamingGroupIds,
     onSelectRoamingGroup
 }) => {
 
@@ -80,92 +80,91 @@ export const LiveToolbar: React.FC<LiveToolbarProps> = ({
 
     // GLOBAL MODE (No Selection)
     return (
-        <div className={styles.toolbarContainer}>
-            {/* Unified Action Bar */}
-
-            {/* Recruit / Invite All */}
-            <NeonButton
-                onClick={onRecruitAll}
-                disabled={(isRoaming && !hasGroupSelected && !selectedRoamingGroupId) || (progress !== null && !isRecruiting) || isLoading}
-                style={{ flex: 1, flexDirection: 'column', height: '60px', gap: '4px', position: 'relative', overflow: 'hidden' }}
-            >
-                {isRecruiting && progress !== null ? (
-                    <>
-                        <div style={{
-                            position: 'absolute', left: 0, top: 0, bottom: 0,
-                            width: `${progress}%`,
-                            background: 'rgba(var(--primary-hue), 100%, 50%, 0.3)',
-                            transition: 'width 0.2s linear'
-                        }} />
-                        <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                            <span style={{ fontWeight: 'bold' }}>{Math.round(progress)}%</span>
-                            <span style={{ fontSize: '0.65rem' }}>{statusText || 'SENDING INVITES...'}</span>
-                        </div>
-                    </>
+        <div className={styles.toolbarContainer} style={{ flexDirection: 'column', gap: '8px' }}>
+            {/* Top Row: Group Selector / Rally */}
+            <div style={{ width: '100%', flex: 'none' }}>
+                {isRoaming ? (
+                    <div style={{ width: '100%', height: '50px', position: 'relative' }}>
+                        <NeonSelect
+                            value={selectedRoamingGroupIds}
+                            onChange={(val) => onSelectRoamingGroup && onSelectRoamingGroup(val)}
+                            options={roamingGroups?.map(g => ({ value: g.id, label: g.name })) || []}
+                            placeholder="SELECT GROUPS"
+                            direction="down"
+                            multiple={true}
+                        />
+                    </div>
                 ) : (
-                    <>
-                        <UserPlus size={20} />
-                        <span style={{ fontSize: '0.7rem' }}>
-                            {isRoaming ? 'INVITE INSTANCE (ROAMING)' : 'INVITE INSTANCE (RECRUIT)'}
-                        </span>
-                    </>
+                    <NeonButton
+                        onClick={onRally}
+                        disabled={!hasGroupSelected || (progress !== null && !isRallying) || isLoading}
+                        variant="secondary"
+                        style={{ width: '100%', height: '45px', gap: '8px', position: 'relative', overflow: 'hidden' }}
+                    >
+                        {isRallying && progress !== null ? (
+                            <>
+                                <div style={{
+                                    position: 'absolute', left: 0, top: 0, bottom: 0,
+                                    width: `${progress}%`,
+                                    background: 'rgba(255, 255, 255, 0.2)',
+                                    transition: 'width 0.2s linear'
+                                }} />
+                                <div style={{ position: 'relative', zIndex: 1, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <span style={{ fontWeight: 'bold' }}>{Math.round(progress)}%</span>
+                                    <span style={{ fontSize: '0.75rem' }}>{statusText || 'RALLYING...'}</span>
+                                </div>
+                            </>
+                        ) : (
+                            <>
+                                <Users size={18} />
+                                <span style={{ fontSize: '0.8rem', fontWeight: 700 }}>RALLY GROUP MEMBERS HERE</span>
+                            </>
+                        )}
+                    </NeonButton>
                 )}
-            </NeonButton>
+            </div>
 
-
-
-            {/* Rally Group / Roaming Selector */}
-            {isRoaming ? (
-                <div style={{ flex: 1, height: '60px', position: 'relative' }}>
-                    <NeonSelect
-                        value={selectedRoamingGroupId}
-                        onChange={(val) => onSelectRoamingGroup && onSelectRoamingGroup(val)}
-                        options={roamingGroups?.map(g => ({ value: g.id, label: g.name })) || []}
-                        placeholder="SELECT GROUP"
-                        direction="down" // Opens down since it's at the top of the controls (or maybe up if controls are at bottom? let's stick to default/down logic)
-                    // Actually, looking at UI, if this is in the toolbar, 'up' might be better if it's at the bottom of the screen?
-                    // But user typically expects down. Let's try 'down'. 
-                    // Wait, the new layout puts health widget BELOW it. So 'down' goes over the widget, which is fine.
-                    />
-                </div>
-            ) : (
+            {/* Bottom Row: Action Buttons */}
+            <div style={{ display: 'flex', gap: '8px', width: '100%', flex: 'none' }}>
+                {/* Recruit / Invite All */}
                 <NeonButton
-                    onClick={onRally}
-                    disabled={!hasGroupSelected || (progress !== null && !isRallying) || isLoading}
-                    variant="secondary"
-                    style={{ flex: 1, flexDirection: 'column', height: '60px', gap: '4px', position: 'relative', overflow: 'hidden' }}
+                    onClick={onRecruitAll}
+                    disabled={(isRoaming && !hasGroupSelected && (!selectedRoamingGroupIds || selectedRoamingGroupIds.length === 0)) || (progress !== null && !isRecruiting) || isLoading}
+                    style={{ flex: 1, flexDirection: 'column', height: '65px', gap: '4px', position: 'relative', overflow: 'hidden' }}
                 >
-                    {isRallying && progress !== null ? (
+                    {isRecruiting && progress !== null ? (
                         <>
                             <div style={{
                                 position: 'absolute', left: 0, top: 0, bottom: 0,
                                 width: `${progress}%`,
-                                background: 'rgba(255, 255, 255, 0.2)',
+                                background: 'rgba(var(--primary-hue), 100%, 50%, 0.3)',
                                 transition: 'width 0.2s linear'
                             }} />
                             <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                                 <span style={{ fontWeight: 'bold' }}>{Math.round(progress)}%</span>
-                                <span style={{ fontSize: '0.65rem' }}>{statusText || 'RALLY IN PROGRESS...'}</span>
+                                <span style={{ fontSize: '0.65rem' }}>{statusText || 'SENDING...'}</span>
                             </div>
                         </>
                     ) : (
                         <>
-                            <Users size={20} />
-                            <span style={{ fontSize: '0.7rem' }}>RALLY GROUP HERE</span>
+                            <UserPlus size={20} />
+                            <span style={{ fontSize: '0.7rem' }}>
+                                {isRoaming ? 'INVITE INSTANCE' : 'RECRUIT ALL'}
+                            </span>
                         </>
                     )}
                 </NeonButton>
-            )}
 
-            {/* Lockdown */}
-            <NeonButton
-                onClick={onLockdown}
-                variant="danger"
-                style={{ flex: 1, flexDirection: 'column', height: '60px', gap: '4px' }}
-            >
-                <ShieldAlert size={20} />
-                <span style={{ fontSize: '0.7rem' }}>EMERGENCY LOCKDOWN</span>
-            </NeonButton>
+                {/* Lockdown */}
+                <NeonButton
+                    onClick={onLockdown}
+                    variant="danger"
+                    style={{ flex: 1, flexDirection: 'column', height: '65px', gap: '4px' }}
+                >
+                    <ShieldAlert size={20} />
+                    <span style={{ fontSize: '0.7rem' }}>LOCKDOWN</span>
+                </NeonButton>
+            </div>
         </div>
     );
 };

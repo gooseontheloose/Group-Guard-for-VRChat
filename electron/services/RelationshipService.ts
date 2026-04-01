@@ -8,18 +8,20 @@ const logger = log.scope('RelationshipService');
 export interface RelationshipEvent {
     id: string;
     timestamp: string;
-    type: 'add' | 'remove' | 'name_change' | 'avatar_change' | 'rank_change' | 'bio_change';
+    type: 'add' | 'remove' | 'name_change' | 'rank_change' | 'bio_change' | 'avatar_change';
     userId: string;
     displayName: string;
     previousName?: string; // For name changes
     avatarUrl?: string;
     avatarId?: string;
+    avatarName?: string; // Enriched
     previousAvatarUrl?: string; // For avatar changes
     previousAvatarId?: string; // For avatar changes
     tags?: string[]; // For rank changes
     previousTags?: string[]; // For rank changes
     bio?: string; // For bio changes
     previousBio?: string; // For bio changes
+    details?: string; // Enriched details text
 }
 
 interface FriendSnapshot {
@@ -214,6 +216,7 @@ class RelationshipService {
 
                         // Actually removal confirmed, so we stop tracking misses for them
                         this.pendingRemovals.delete(userId);
+                        this.lastSnapshot.delete(userId);
                     } else {
                         logger.debug(`Friend missing from poll (${missCount}/${this.MISS_THRESHOLD}): ${friend.displayName}`);
                     }
@@ -246,9 +249,35 @@ class RelationshipService {
                     const { serviceEventBus } = require('./ServiceEventBus');
                     serviceEventBus.emit('friendship-relationship-changed', { event });
                 }
+            }
 
-                // Check for AVATAR CHANGES (same userId, different avatarUrl)
-                if (previous && previous.avatarUrl !== current.avatarUrl) {
+            // Check for AVATAR CHANGES
+            for (const [userId, current] of currentFriends) {
+                const previous = this.lastSnapshot.get(userId);
+                // We need a robust ID check (some APIs return it in different fields)
+                // If we don't have an ID, we can't show the clickable modal, so we prefer to capture it if at all possible.
+                // However, we only log if the avatar *actually changed* (ID mismatch).
+
+                if (previous && (previous.avatarId !== current.avatarId || (!previous.avatarId && !current.avatarId && previous.avatarUrl !== current.avatarUrl))) {
+
+                    // Filter out cases where we just missed the ID previously but it's consistent
+                    if (!previous.avatarId && current.avatarId && previous.avatarUrl === current.avatarUrl) {
+                        continue;
+                    }
+
+                    let avatarName = '';
+                    if (current.avatarId) {
+                        try {
+                            // Enriched: Fetch avatar name for the log
+                            const av = await vrchatApiService.getAvatar(current.avatarId);
+                            if (av.success && av.data) {
+                                avatarName = av.data.name;
+                            }
+                        } catch (e) {
+                            logger.warn(`Failed to fetch avatar name for ${current.avatarId}`, e);
+                        }
+                    }
+
                     const event: RelationshipEvent = {
                         id: `${now}-${Math.random().toString(36).substr(2, 5)}`,
                         timestamp: now,
@@ -257,11 +286,13 @@ class RelationshipService {
                         displayName: current.displayName,
                         avatarUrl: current.avatarUrl,
                         avatarId: current.avatarId,
+                        avatarName: avatarName,
                         previousAvatarUrl: previous.avatarUrl,
-                        previousAvatarId: previous.avatarId
+                        previousAvatarId: previous.avatarId,
+                        details: avatarName ? `Switched to ${avatarName}` : 'Changed avatar'
                     };
-                    this.appendEvent(event);
-                    logger.info(`Avatar change detected in background for: ${current.displayName}`);
+                    // this.appendEvent(event); // Do not log to relationships.jsonl (User only wants it in Activity Feed)
+                    logger.info(`Avatar change detected: ${current.displayName} (${current.avatarId}) - ${avatarName}`);
 
                     // Emit to service bus
                     const { serviceEventBus } = require('./ServiceEventBus');
@@ -270,7 +301,16 @@ class RelationshipService {
             }
 
             // Update snapshot
-            this.lastSnapshot = currentFriends;
+            // --- UPDATE SNAPSHOT LOGIC ---
+            // 1. Update/Add current friends to snapshot (preserves missing friends in grace period)
+            for (const [userId, friend] of currentFriends) {
+                this.lastSnapshot.set(userId, friend);
+                // Also reset miss count for them if they were previously missing
+                if (this.pendingRemovals.has(userId)) {
+                    this.pendingRemovals.delete(userId);
+                }
+            }
+
             this.saveSnapshot();
 
         } catch (e) {

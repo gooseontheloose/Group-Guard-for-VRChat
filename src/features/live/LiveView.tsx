@@ -62,13 +62,16 @@ export const LiveView: React.FC = () => {
     const myGroups = useGroupStore(state => state.myGroups);
 
     // Roaming mode: selected group for invites
-    const [roamingSelectedGroupId, setRoamingSelectedGroupId] = useState<string | null>(null);
-    const roamingSelectedGroup = useMemo(() =>
-        myGroups.find(g => g.id === roamingSelectedGroupId) || null
-        , [myGroups, roamingSelectedGroupId]);
+    const [roamingSelectedGroupIds, setRoamingSelectedGroupIds] = useState<string[]>([]);
+    const roamingSelectedGroups = useMemo(() =>
+        myGroups.filter(g => roamingSelectedGroupIds.includes(g.id)) || []
+        , [myGroups, roamingSelectedGroupIds]);
 
-    // The effective group to use for invites (either selected or roaming-selected)
-    const effectiveGroup = selectedGroup || roamingSelectedGroup;
+    // The effective groups to use for invites
+    const effectiveGroups = useMemo(() => {
+        if (isRoamingMode) return roamingSelectedGroups;
+        return selectedGroup ? [selectedGroup] : [];
+    }, [isRoamingMode, roamingSelectedGroups, selectedGroup]);
 
     const currentWorldName = useInstanceMonitorStore(state => state.currentWorldName);
     const currentWorldId = useInstanceMonitorStore(state => state.currentWorldId);
@@ -374,15 +377,28 @@ export const LiveView: React.FC = () => {
 
     // Actions
     const handleRecruit = useCallback(async (userId: string, name: string) => {
-        if (!effectiveGroup) return;
-        addLog(`[CMD] Inviting ${name}...`, 'info');
-        try {
-            await window.electron.instance.recruitUser(effectiveGroup.id, userId);
-            addLog(`[CMD] Invite sent to ${name}`, 'success');
-        } catch {
-            addLog(`[CMD] Failed to invite ${name}`, 'error');
+        if (effectiveGroups.length === 0) return;
+        
+        addLog(`[CMD] Inviting ${name} to ${effectiveGroups.length} groups...`, 'info');
+        
+        for (const group of effectiveGroups) {
+            try {
+                const res = await window.electron.instance.recruitUser(group.id, userId);
+                if (res.success) {
+                    addLog(`[CMD] Invite sent to ${name} (${group.name})`, 'success');
+                } else {
+                    const errorMsg = res.error === 'RATE_LIMIT' ? 'Rate Limited' : (res.error || 'Unknown Error');
+                    addLog(`[CMD] Failed to invite ${name} to ${group.name}: ${errorMsg}`, 'error');
+                    if (res.error === 'RATE_LIMIT') break; // Stop multi-invite for this user if rate limited
+                }
+            } catch (err) {
+                addLog(`[CMD] Failed to invite ${name} to ${group.name}`, 'error');
+            }
+            if (effectiveGroups.length > 1) {
+                await new Promise(r => setTimeout(r, 1000)); // Safety delay between groups
+            }
         }
-    }, [effectiveGroup, addLog]);
+    }, [effectiveGroups, addLog]);
 
     const handleKick = useCallback(async (userId: string, name: string) => {
         if (!selectedGroup) return;
@@ -464,27 +480,36 @@ export const LiveView: React.FC = () => {
     }, [selectedGroup, selectedEntityIds, confirm, addLog, setEntityStatus, entities]);
 
     const handleInviteSelected = useCallback(async () => {
-        if (!effectiveGroup || selectedEntityIds.size === 0) return;
+        if (effectiveGroups.length === 0 || selectedEntityIds.size === 0) return;
 
         const count = selectedEntityIds.size;
-        addLog(`[BATCH] Sending invites to ${count} users...`, 'info');
+        addLog(`[BATCH] Sending invites to ${count} users for ${effectiveGroups.length} groups...`, 'info');
 
         for (const id of selectedEntityIds) {
             const name = entities.find(e => e.id === id)?.displayName || id;
-            try {
-                await window.electron.instance.recruitUser(effectiveGroup.id, id);
-                addLog(`[BATCH] Invited ${name}`, 'success');
-                await new Promise(r => setTimeout(r, 200));
-            } catch {
-                addLog(`[BATCH] Failed to invite ${name}`, 'error');
+            
+            for (const group of effectiveGroups) {
+                try {
+                    const res = await window.electron.instance.recruitUser(group.id, id);
+                    if (res.success) {
+                        addLog(`[BATCH] Invited ${name} to ${group.name}`, 'success');
+                    } else {
+                        const errorMsg = res.error === 'RATE_LIMIT' ? 'Rate Limited' : (res.error || 'Unknown Error');
+                        addLog(`[BATCH] Failed to invite ${name} to ${group.name}: ${errorMsg}`, 'error');
+                        if (res.error === 'RATE_LIMIT') break;
+                    }
+                } catch {
+                    addLog(`[BATCH] Failed to invite ${name} to ${group.name}`, 'error');
+                }
+                await new Promise(r => setTimeout(r, 1000));
             }
         }
         clearSelection();
-    }, [effectiveGroup, selectedEntityIds, addLog, entities]);
+    }, [effectiveGroups, selectedEntityIds, addLog, entities]);
 
     const handleRecruitAll = () => {
         console.log('[LiveView] handleRecruitAll clicked');
-        if (!effectiveGroup) {
+        if (effectiveGroups.length === 0) {
             console.log('[LiveView] handleRecruitAll: No effective group selected');
             addLog(`[CMD] Cannot invite without a selected group.`, 'warn');
             return;
@@ -511,102 +536,65 @@ export const LiveView: React.FC = () => {
         });
     };
 
-    const executeRecruit = async (speedDelay: number) => {
+    const executeRecruit = async (initialSpeedDelay: number) => {
         setOperationDialog(prev => ({ ...prev, isOpen: false }));
 
-        if (!effectiveGroup) {
+        if (effectiveGroups.length === 0) {
             addLog(`[CMD] Cannot invite without a selected group.`, 'warn');
             return;
         }
-        if (!entities.length) {
-            addLog(`[CMD] No players detected yet. Try leaving and re-entering the instance.`, 'warn');
-            return;
-        }
+        
         const targets = entities.filter(e => !e.isGroupMember && e.status === 'active');
         if (targets.length === 0) {
             addLog(`[CMD] No strangers to recruit.`, 'warn');
             return;
         }
 
-        addLog(`[CMD] SENDING MASS INVITES TO ${targets.length} STRANGERS...`, 'warn');
+        const totalInvitesCount = targets.length * effectiveGroups.length;
+        addLog(`[CMD] STARTING MASS RECRUITMENT: ${totalInvitesCount} INVITES TOTAL...`, 'warn');
 
-        let keywordRuleInvoked = false;
-        try {
-            const rules = await window.electron.automod.getRules(effectiveGroup.id);
-            keywordRuleInvoked = rules.some(r => r.type === 'KEYWORD_BLOCK' && r.enabled);
-            if (keywordRuleInvoked) {
-                addLog(`[AUTOMOD] Keyword Filter Active: Scanning profiles...`, 'info');
-            }
-        } catch (e) {
-            console.error("Failed to fetch automod rules", e);
-        }
-
-        setProgress({ current: 0, total: targets.length });
+        setProgress({ current: 0, total: totalInvitesCount });
         setProgressMode('recruit');
 
-        let count = 0;
-        const blocked: { name: string; reason?: string }[] = [];
+        let inviteIndex = 0;
+        let successCount = 0;
+        let currentDelay = initialSpeedDelay;
+        const maxDelay = 60; // Max 1 minute backoff
 
         for (const t of targets) {
-            if (keywordRuleInvoked) {
-                setCurrentProcessingUser({ name: t.displayName, phase: 'checking' });
-                await new Promise(r => setTimeout(r, 200));
+            // Optional: AutoMod Check could go here (once per user)
+            // For now, keeping it simple as per user request focus.
 
+            for (const group of effectiveGroups) {
+                setCurrentProcessingUser({ name: `${t.displayName} ➔ ${group.name}`, phase: 'inviting' });
+                
                 try {
-                    const userRes = await window.electron.getUser(t.id);
-                    if (userRes.success && userRes.user) {
-                        const checkRes = await window.electron.automod.checkUser({
-                            id: t.id,
-                            displayName: t.displayName,
-                            tags: userRes.user.tags,
-                            bio: userRes.user.bio,
-                            status: userRes.user.status,
-                            statusDescription: userRes.user.statusDescription,
-                            pronouns: userRes.user.pronouns
-                        }, effectiveGroup.id);
-
-                        if (checkRes.action === 'REJECT' || checkRes.action === 'AUTO_BLOCK') {
-                            setCurrentProcessingUser({ name: t.displayName, phase: 'skipped' });
-                            blocked.push({ name: t.displayName, reason: checkRes.reason });
-                            addLog(`[AUTOMOD] Skipped ${t.displayName} (Match: ${checkRes.reason})`, 'warn');
-                            setProgress({ current: count + blocked.length, total: targets.length });
-                            await new Promise(r => setTimeout(r, 300));
-                            continue;
-                        }
+                    const res = await window.electron.instance.recruitUser(group.id, t.id);
+                    
+                    if (res.success) {
+                        addLog(`[INVITE] ${t.displayName} ✓ Sent to ${group.name}`, 'success');
+                        successCount++;
+                    } else if (res.error === 'RATE_LIMIT' || res.error === 'Rate Limited') {
+                        // DYNAMIC BACKOFF
+                        currentDelay = Math.min(maxDelay, currentDelay * 2);
+                        addLog(`[WARN] RATE LIMITED! Backing off to ${currentDelay}s interval...`, 'warn');
+                        // We still count it as processed for this attempt
+                    } else {
+                        addLog(`[INVITE] ${t.displayName} ✗ Failed (${group.name}): ${res.error || 'Unknown'}`, 'error');
                     }
                 } catch (e) {
-                    console.error("AutoMod check failed for user", t.displayName, e);
+                    addLog(`[INVITE] ${t.displayName} ✗ Error (${group.name})`, 'error');
                 }
+
+                inviteIndex++;
+                setProgress({ current: inviteIndex, total: totalInvitesCount });
+                
+                // Wait the (potentially backed-off) delay
+                await new Promise(r => setTimeout(r, currentDelay * 1000));
             }
-
-            setCurrentProcessingUser({ name: t.displayName, phase: 'inviting' });
-            const res = await window.electron.instance.recruitUser(effectiveGroup.id, t.id);
-
-            if (!res.success && res.error === 'RATE_LIMIT') {
-                addLog(`[WARN] RATE LIMIT DETECTED! Cooling down for 10s...`, 'warn');
-                await new Promise(r => setTimeout(r, 10000));
-            } else if (res.success) {
-                addLog(`[INVITE] ${t.displayName} ✓ Sent`, 'success');
-            } else {
-                addLog(`[INVITE] ${t.displayName} ✗ Failed: ${res.error || 'Unknown'}`, 'error');
-            }
-
-            count++;
-            setProgress({ current: count + blocked.length, total: targets.length });
-            await new Promise(r => setTimeout(r, speedDelay * 1000));
         }
 
-        addLog(`[CMD] Recruitment complete. Sent ${count} invites to ${effectiveGroup.name}.`, 'success');
-
-        if (keywordRuleInvoked || blocked.length > 0) {
-            if (blocked.length > 0) {
-                addLog(`[AUTOMOD] Blocked ${blocked.length} users from invite list.`, 'warn');
-            } else {
-                addLog(`[AUTOMOD] All users passed AutoMod check.`, 'success');
-            }
-            setRecruitResults({ blocked, invited: count });
-        }
-
+        addLog(`[CMD] Recruitment complete. ${successCount}/${totalInvitesCount} invites sent.`, 'success');
         setCurrentProcessingUser(null);
         setProgress(null);
         setProgressMode(null);
@@ -931,7 +919,7 @@ export const LiveView: React.FC = () => {
                                                         onKick={handleKick}
                                                         onBan={handleBanClick}
                                                         onAddFlag={handleFlagClick}
-                                                        readOnly={isRoamingMode && !roamingSelectedGroup}
+                                                        readOnly={isRoamingMode && (!roamingSelectedGroups || roamingSelectedGroups.length === 0)}
                                                         isSelected={selectedEntityIds.has(entity.id)}
                                                         selectionMode={true}
                                                         onToggleSelect={toggleSelection}
@@ -1069,7 +1057,7 @@ export const LiveView: React.FC = () => {
                                     onRecruitAll={handleRecruitAll}
                                     onLockdown={handleLockdown}
                                     isRoaming={isRoamingMode}
-                                    hasGroupSelected={!!effectiveGroup}
+                                    hasGroupSelected={effectiveGroups.length > 0}
                                     isRallying={progressMode === 'rally'}
                                     isRecruiting={progressMode === 'recruit'}
                                     progress={progress ? Math.round((progress.current / progress.total) * 100) : null}
@@ -1078,8 +1066,8 @@ export const LiveView: React.FC = () => {
                                         : undefined
                                     }
                                     roamingGroups={myGroups}
-                                    selectedRoamingGroupId={roamingSelectedGroupId}
-                                    onSelectRoamingGroup={setRoamingSelectedGroupId}
+                                    selectedRoamingGroupIds={roamingSelectedGroupIds}
+                                    onSelectRoamingGroup={setRoamingSelectedGroupIds}
                                     isLoading={isLoading}
                                 />
                             </GlassPanel>

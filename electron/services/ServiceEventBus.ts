@@ -62,6 +62,8 @@ export interface ServiceEventPayloads {
     'friendship-relationship-changed': { event: any };
     'video-play': { url: string, requestedBy: string, timestamp: string };
     'vote-kick': { target: string, initiator: string, timestamp: string };
+    'avatar-resolved': { avatarId: string; name: string };
+    'social-feed-updated': Record<string, never>;
 }
 
 class ServiceEventBus extends EventEmitter {
