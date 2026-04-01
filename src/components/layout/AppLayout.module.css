@@ -15,6 +15,7 @@
   display: flex;
   flex-direction: column;
   width: 100%;
+  min-height: 0;
 }
 
 .contentWrapper {
@@ -24,6 +25,7 @@
   padding-top: 72px; /* Space for TitleBar (72px) */
   display: flex;
   flex-direction: column;
+  min-height: 0;
 }
 
 /* Custom Drag Region at top */

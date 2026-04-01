@@ -392,7 +392,7 @@ function App() {
           onIntegrationsClick={() => handleViewChange('integrations')}
           onLogoutClick={() => setIsLogoutConfirmOpen(true)}
         />
-        <div className="flex-1 relative overflow-hidden flex flex-col">
+        <div className="flex-1 relative overflow-hidden flex flex-col" style={{ minHeight: 0 }}>
           {content}
         </div>
         <NeonDock 

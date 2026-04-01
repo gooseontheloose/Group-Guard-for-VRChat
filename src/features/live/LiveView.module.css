@@ -5,6 +5,7 @@
   gap: 0;
   padding-bottom: var(--dock-height);
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 .headerPanel {

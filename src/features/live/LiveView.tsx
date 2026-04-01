@@ -378,9 +378,9 @@ export const LiveView: React.FC = () => {
     // Actions
     const handleRecruit = useCallback(async (userId: string, name: string) => {
         if (effectiveGroups.length === 0) return;
-        
+
         addLog(`[CMD] Inviting ${name} to ${effectiveGroups.length} groups...`, 'info');
-        
+
         for (const group of effectiveGroups) {
             try {
                 const res = await window.electron.instance.recruitUser(group.id, userId);
@@ -487,7 +487,7 @@ export const LiveView: React.FC = () => {
 
         for (const id of selectedEntityIds) {
             const name = entities.find(e => e.id === id)?.displayName || id;
-            
+
             for (const group of effectiveGroups) {
                 try {
                     const res = await window.electron.instance.recruitUser(group.id, id);
@@ -543,7 +543,7 @@ export const LiveView: React.FC = () => {
             addLog(`[CMD] Cannot invite without a selected group.`, 'warn');
             return;
         }
-        
+
         const targets = entities.filter(e => !e.isGroupMember && e.status === 'active');
         if (targets.length === 0) {
             addLog(`[CMD] No strangers to recruit.`, 'warn');
@@ -567,10 +567,10 @@ export const LiveView: React.FC = () => {
 
             for (const group of effectiveGroups) {
                 setCurrentProcessingUser({ name: `${t.displayName} ➔ ${group.name}`, phase: 'inviting' });
-                
+
                 try {
                     const res = await window.electron.instance.recruitUser(group.id, t.id);
-                    
+
                     if (res.success) {
                         addLog(`[INVITE] ${t.displayName} ✓ Sent to ${group.name}`, 'success');
                         successCount++;
@@ -588,7 +588,7 @@ export const LiveView: React.FC = () => {
 
                 inviteIndex++;
                 setProgress({ current: inviteIndex, total: totalInvitesCount });
-                
+
                 // Wait the (potentially backed-off) delay
                 await new Promise(r => setTimeout(r, currentDelay * 1000));
             }
@@ -748,7 +748,7 @@ export const LiveView: React.FC = () => {
                 variants={containerVariants}
                 initial="hidden"
                 animate="show"
-                style={{ display: 'flex', flexDirection: 'column', height: '100%', gap: '1rem', padding: '1rem', paddingBottom: 'var(--dock-height)' }}
+                style={{ display: 'flex', flexDirection: 'column', height: '100%', minHeight: 0, gap: '1rem', padding: '1rem', paddingBottom: 'var(--dock-height)', boxSizing: 'border-box', overflow: 'hidden' }}
             >
                 {/* Header Panel */}
                 <GlassPanel className={styles.headerPanel}>
@@ -829,7 +829,7 @@ export const LiveView: React.FC = () => {
                 <div style={{ display: 'flex', gap: '1rem', flex: 1, minHeight: 0 }}>
 
                     {/* Left: Entity List (2/3 width) */}
-                    <GlassPanel style={{ flex: 2, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 0 }}>
+                    <GlassPanel style={{ flex: 2, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 0, minHeight: 0 }}>
                         {/* Tab Header */}
                         <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)' }}>
                             <button
@@ -876,7 +876,7 @@ export const LiveView: React.FC = () => {
                         </div>
 
                         {/* Entity List Content */}
-                        <div style={{ flex: 1, overflowY: 'auto', padding: '1rem' }}>
+                        <div style={{ flex: '1 1 0%', overflowY: 'auto', padding: '1rem', minHeight: 0 }}>
                             <AnimatePresence mode="wait">
                                 {entityTab === 'active' ? (
                                     <motion.div
@@ -966,7 +966,7 @@ export const LiveView: React.FC = () => {
                     </GlassPanel>
 
                     {/* Right: Actions & Logs (1/3 width) */}
-                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem', minWidth: '280px', overflowY: 'auto', overflowX: 'hidden', paddingRight: '4px' }}>
+                    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '1rem', minWidth: '280px', overflowY: 'auto', overflowX: 'hidden', paddingRight: '4px', minHeight: 0 }}>
 
                         {/* Right Panel Tabs */}
                         <div style={{ display: 'flex', background: 'var(--color-surface-card)', borderRadius: '8px', padding: '4px', border: '1px solid var(--border-color)' }}>
@@ -1007,7 +1007,7 @@ export const LiveView: React.FC = () => {
                         </div>
 
                         {/* Actions Panel */}
-                        <div style={{ display: rightTab === 'controls' ? 'flex' : 'none', flexDirection: 'column', height: '100%' }}>
+                        <div style={{ display: rightTab === 'controls' ? 'flex' : 'none', flexDirection: 'column', flex: 1, minHeight: 0 }}>
                             <GlassPanel style={{ padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.5rem', position: 'relative', zIndex: 10, overflow: 'visible', flexShrink: 0 }}>
                                 <h3 className={styles.actionsHeader}>
                                     <Crosshair size={16} />
@@ -1086,8 +1086,8 @@ export const LiveView: React.FC = () => {
                                 />
                             </GlassPanel>
 
-                            {/* Live Player Chart */}
-                            <GlassPanel style={{ marginTop: '10px', padding: '0', flex: 1, minHeight: '150px', display: 'flex', flexDirection: 'column' }}>
+                            {/* Live Player Chart (Live Traffic) */}
+                            <GlassPanel style={{ marginTop: '10px', padding: '0', flex: 1, minHeight: '100px', display: 'flex', flexDirection: 'column' }}>
                                 <LivePlayerChart style={{ flex: 1, width: '100%' }} />
                             </GlassPanel>
 
@@ -1106,7 +1106,7 @@ export const LiveView: React.FC = () => {
                         </div>
 
                         {/* Log Terminal */}
-                        <div style={{ display: rightTab === 'telemetry' ? 'flex' : 'none', flex: 1, minHeight: '400px' }}>
+                        <div style={{ display: rightTab === 'telemetry' ? 'flex' : 'none', flex: 1, minHeight: 0 }}>
                             <GlassPanel className={styles.logTerminal}>
                                 <div className={styles.logHeader}>
                                     <Activity size={14} />
